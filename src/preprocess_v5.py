@@ -259,6 +259,27 @@ class YearEmployedFeatureCreator(BaseEstimator, TransformerMixin):
         X = X.drop(columns=['DAYS_EMPLOYED'])
         return X
 
+class HourBinner(BaseEstimator, TransformerMixin):
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        X = X.copy()
+        
+        def bin_hour(x):
+            if x < 6:
+                return "Late_Night"
+            elif x < 12:
+                return "Morning"
+            elif x < 18:
+                return "Afternoon"
+            else:
+                return "Evening"
+        
+        X['HOUR_APPR_PROCESS_BIN'] = X['HOUR_APPR_PROCESS_START'].apply(bin_hour)
+        
+        return X
+
 class CreditBureauProcessor(BaseEstimator, TransformerMixin):
     """Process credit bureau columns"""
     
