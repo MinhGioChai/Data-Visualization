@@ -5,6 +5,8 @@ from sklearn.impute import SimpleImputer, KNNImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
+from pathlib import Path
+import joblib
 
 class ColumnDropper(BaseEstimator, TransformerMixin):
     """Drop columns with high missing values"""
@@ -961,21 +963,25 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None):
     pipeline = Pipeline(steps)
     return pipeline
 
+def save_preprocessing_pipeline(pipeline, filepath: str):
+    """
+    Save preprocessing pipeline to disk
+    
+    Parameters:
+    -----------
+    pipeline : sklearn.pipeline.Pipeline
+        Preprocessing pipeline to save
+    filepath : str
+        Path to save pipeline
+    """
+    Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(pipeline, filepath)
+    print(f"Preprocessing pipeline saved to {filepath}")
+
+
 
 # Example usage with different encoders:
 if __name__ == "__main__":
-    #Load your data
-    df = pd.read_csv(r"D:\data_final\Data-Visualization\raw_data\full_data.csv")
-    X = df.drop('TARGET', axis=1)
-    y = df['TARGET']
-    X_train, X_test, y_train, y_test = train_test_split(
-       X, y,
-        test_size=0.2, 
-        random_state=42,
-        stratify=y
-    )
-    
-    
     # ========== EXAMPLE 1: Smart encoding (automatic) ==========
     # pipeline = create_preprocessing_pipeline(encoding_type='smart')
     # df_transformed = pipeline.fit_transform(df)
@@ -1016,14 +1022,8 @@ if __name__ == "__main__":
         encoding_type='flexible',
         encoding_config=encoding_config
     )
-    df_transformed = pipeline.fit_transform(df)
-    # Fit and transform training data
-    X_train_transformed = pipeline.fit_transform(X_train)
-    
-    # Transform test data
-    X_test_transformed = pipeline.transform(X_test)
-    
-    
+
+    save_preprocessing_pipeline(pipeline, 'models/preprocessing_pipeline.pkl')
     # ========== EXAMPLE 3: Mix encoders in custom pipeline ==========
     # from sklearn.pipeline import Pipeline
     # custom_pipeline = Pipeline([
