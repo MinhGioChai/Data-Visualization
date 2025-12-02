@@ -1,1 +1,6 @@
+<<<<<<< HEAD
 statmodels
+=======
+setuptools
+pip
+>>>>>>> 7120f1ca71f7e5c97df8c65baf8e9f1655612b50
