@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 📘 Credit Default Risk Prediction #
 ### The Power of Data Preparation – A Data Storytelling Approach
 
@@ -149,3 +150,6 @@ After proper data preparation:
 - Duong Thi Huyen Trang
 
 Supervisor: Dr. Nguyen Tuan Long
+=======
+
+>>>>>>> 40d4c40552d401d62299bb30798501795149289a
