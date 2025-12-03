@@ -844,6 +844,7 @@ class FlexibleCategoricalEncoder(BaseEstimator, TransformerMixin):
         for col in self.frequency_encode_cols:
             if col in X.columns:
                 freq_map = X[col].value_counts(normalize=True).to_dict()
+                print(f'frequency map for {col}: {freq_map}')
                 self.frequency_maps_[col] = freq_map
                 print(f"Frequency encoding: {col} ({X[col].nunique()} categories)")
         
@@ -889,10 +890,14 @@ class FlexibleCategoricalEncoder(BaseEstimator, TransformerMixin):
         # 4. Frequency encode
         for col in self.frequency_encode_cols:
             if col in X.columns and col in self.frequency_maps_:
+                # print('Done create freq map, start transform')
                 freq_map = self.frequency_maps_[col]
+                # print(f'freq map for {col} during transform: {freq_map}')
                 freq_encoded = X[col].map(freq_map).fillna(0)
-                result_dfs.append(pd.DataFrame(freq_encoded, columns=[col + '_freq'], index=X.index))
-        
+                # print(f'freq encoded sample for {col}: {freq_encoded.head()}')
+                freq_df = freq_encoded.rename(col + "_freq").to_frame()
+                print(freq_df.head())
+                result_dfs.append(freq_df)
         # Combine all encoded features
         X_transformed = pd.concat(result_dfs, axis=1)
         
@@ -1034,7 +1039,7 @@ if __name__ == "__main__":
             ]
         },
         'frequency_encode_cols': [
-            'ORGANISATION_TYPE',     # High cardinality: 50+ types
+            'ORGANIZATION_TYPE',     # High cardinality: 50+ types
             'OCCUPATION_TYPE'        # Medium-high cardinality: ~18 types
         ]
     }
