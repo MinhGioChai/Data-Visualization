@@ -1,0 +1,11 @@
+📚 Reference list 
+
+GeeksforGeeks. (n.d.). *Decision Tree in Machine Learning – Introduction & Example*. Retrieved December 3, 2025, from [https://www.geeksforgeeks.org/machine-learning/decision-tree-introduction-example/](https://www.geeksforgeeks.org/machine-learning/decision-tree-introduction-example/)
+
+GeeksforGeeks. (n.d.). *Understanding Logistic Regression*. Retrieved December 3, 2025, from [https://www.geeksforgeeks.org/machine-learning/understanding-logistic-regression/](https://www.geeksforgeeks.org/machine-learning/understanding-logistic-regression/)
+
+User. (2021). Which assumptions should be checked for regression tree to validate model? *Statistics & Machine Learning Stack Exchange*. Retrieved December 3, 2025, from [https://stats.stackexchange.com/questions/518167/which-assumptions-should-be-checked-for-regression-tree-to-validated-model](https://stats.stackexchange.com/questions/518167/which-assumptions-should-be-checked-for-regression-tree-to-validated-model)
+
+Knaflic, C. N. (2015). *Storytelling with Data: A Data Visualization Guide for Business Professionals*. Wiley.
+
+

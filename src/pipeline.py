@@ -8,33 +8,6 @@ from sklearn.model_selection import train_test_split
 from pathlib import Path
 import joblib
 
-class ColumnDropper(BaseEstimator, TransformerMixin):
-    """Drop columns with high missing values"""
-    
-    def __init__(self):
-        self.columns_to_drop = ['ID',
-            'APARTMENTS_AVG', 'BASEMENTAREA_AVG', 'YEARS_BEGINEXPLUATATION_AVG',
-            'YEARS_BUILD_AVG', 'COMMONAREA_AVG', 'ELEVATORS_AVG', 'ENTRANCES_AVG',
-            'FLOORSMAX_AVG', 'FLOORSMIN_AVG', 'LANDAREA_AVG', 'LIVINGAPARTMENTS_AVG',
-            'LIVINGAREA_AVG', 'NONLIVINGAPARTMENTS_AVG', 'NONLIVINGAREA_AVG',
-            'APARTMENTS_MODE', 'BASEMENTAREA_MODE', 'YEARS_BEGINEXPLUATATION_MODE',
-            'YEARS_BUILD_MODE', 'COMMONAREA_MODE', 'ELEVATORS_MODE', 'ENTRANCES_MODE',
-            'FLOORSMAX_MODE', 'FLOORSMIN_MODE', 'LANDAREA_MODE', 'LIVINGAPARTMENTS_MODE',
-            'LIVINGAREA_MODE', 'NONLIVINGAPARTMENTS_MODE', 'NONLIVINGAREA_MODE',
-            'APARTMENTS_MEDI', 'BASEMENTAREA_MEDI', 'YEARS_BEGINEXPLUATATION_MEDI',
-            'YEARS_BUILD_MEDI', 'COMMONAREA_MEDI', 'ELEVATORS_MEDI', 'ENTRANCES_MEDI',
-            'FLOORSMAX_MEDI', 'FLOORSMIN_MEDI', 'LANDAREA_MEDI', 'LIVINGAPARTMENTS_MEDI',
-            'LIVINGAREA_MEDI', 'NONLIVINGAPARTMENTS_MEDI', 'NONLIVINGAREA_MEDI',
-            'FONDKAPREMONT_MODE', 'HOUSETYPE_MODE', 'TOTALAREA_MODE',
-            'WALLSMATERIAL_MODE', 'EMERGENCYSTATE_MODE'
-        ]
-    
-    def fit(self, X, y=None):
-        return self
-    
-    def transform(self, X):
-        return X.drop(columns=self.columns_to_drop, errors='ignore')
-
 
 class BasicImputerTransformer(BaseEstimator, TransformerMixin):
     """Handle basic missing value imputation for specific columns"""
@@ -844,6 +817,7 @@ class FlexibleCategoricalEncoder(BaseEstimator, TransformerMixin):
         for col in self.frequency_encode_cols:
             if col in X.columns:
                 freq_map = X[col].value_counts(normalize=True).to_dict()
+                print(f'frequency map for {col}: {freq_map}')
                 self.frequency_maps_[col] = freq_map
                 print(f"Frequency encoding: {col} ({X[col].nunique()} categories)")
         
@@ -889,10 +863,14 @@ class FlexibleCategoricalEncoder(BaseEstimator, TransformerMixin):
         # 4. Frequency encode
         for col in self.frequency_encode_cols:
             if col in X.columns and col in self.frequency_maps_:
+                # print('Done create freq map, start transform')
                 freq_map = self.frequency_maps_[col]
+                # print(f'freq map for {col} during transform: {freq_map}')
                 freq_encoded = X[col].map(freq_map).fillna(0)
-                result_dfs.append(pd.DataFrame(freq_encoded, columns=[col + '_freq'], index=X.index))
-        
+                # print(f'freq encoded sample for {col}: {freq_encoded.head()}')
+                freq_df = freq_encoded.rename(col + "_freq").to_frame()
+                print(freq_df.head())
+                result_dfs.append(freq_df)
         # Combine all encoded features
         X_transformed = pd.concat(result_dfs, axis=1)
         
@@ -932,7 +910,6 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None):
     
     # Base pipeline steps
     steps = [
-        ('drop_columns', ColumnDropper()),
         ('basic_imputer', BasicImputerTransformer()),
         ('car_age_imputer', CarAgeImputer()),
         ('employment_imputer', EmploymentImputer()),
@@ -1034,7 +1011,7 @@ if __name__ == "__main__":
             ]
         },
         'frequency_encode_cols': [
-            'ORGANISATION_TYPE',     # High cardinality: 50+ types
+            'ORGANIZATION_TYPE',     # High cardinality: 50+ types
             'OCCUPATION_TYPE'        # Medium-high cardinality: ~18 types
         ]
     }
