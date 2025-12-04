@@ -518,3 +518,335 @@ def plot_ordinal_ordered_bar_vs_target(data: pd.DataFrame, feature: str, target:
         plt.show()
     
     return ax1, ax2
+# ==================== PHẦN 2: HÀM TÍNH METRICS ====================
+
+def calculate_continuous_metrics(data: pd.Series, target: Optional[pd.Series] = None) -> pd.DataFrame:
+    """
+    Tính metrics cho biến continuous
+    
+    Parameters:
+    -----------
+    data : pd.Series
+        Dữ liệu continuous
+    target : pd.Series, optional
+        Cột target (0/1) để tính ANOVA F-test
+        
+    Returns:
+    --------
+    pd.DataFrame
+        DataFrame chứa các metrics
+    """
+    clean_data = data.dropna()
+    
+    metrics = {
+        'Feature': [data.name or 'Unknown'],
+        'Count': [len(clean_data)],
+        'Missing': [len(data) - len(clean_data)],
+        'Mean': [clean_data.mean()],
+        'Median': [clean_data.median()],
+        'Std': [clean_data.std()],
+        'Min': [clean_data.min()],
+        'Max': [clean_data.max()],
+        'Skewness': [stats.skew(clean_data)],
+        'Kurtosis': [stats.kurtosis(clean_data)]
+    }
+    
+    # Tính ANOVA F-test nếu có target
+    if target is not None:
+        aligned_data = pd.DataFrame({'feature': data, 'target': target}).dropna()
+        groups = [aligned_data[aligned_data['target'] == val]['feature'].values 
+                 for val in aligned_data['target'].unique()]
+        f_stat, p_value = f_oneway(*groups)
+        metrics['ANOVA_F_Statistic'] = [f_stat]
+        metrics['ANOVA_P_Value'] = [p_value]
+    
+    return pd.DataFrame(metrics)
+
+
+def calculate_nominal_metrics(data: pd.Series) -> pd.DataFrame:
+    """
+    Tính metrics cho biến nominal
+    
+    Parameters:
+    -----------
+    data : pd.Series
+        Dữ liệu nominal
+        
+    Returns:
+    --------
+    pd.DataFrame
+        DataFrame chứa các metrics
+    """
+    value_counts = data.value_counts()
+    
+    metrics = {
+        'Feature': [data.name or 'Unknown'],
+        'Count': [len(data.dropna())],
+        'Missing': [data.isna().sum()],
+        'Unique_Values': [data.nunique()],
+        'Mode': [data.mode()[0] if len(data.mode()) > 0 else None],
+        'Mode_Frequency': [value_counts.iloc[0] if len(value_counts) > 0 else 0],
+        'Mode_Percentage': [value_counts.iloc[0] / len(data.dropna()) * 100 if len(value_counts) > 0 else 0]
+    }
+    
+    return pd.DataFrame(metrics)
+
+
+def calculate_ordinal_metrics(data: pd.Series, order_mapping: Optional[Dict] = None) -> pd.DataFrame:
+    """
+    Tính metrics cho biến ordinal
+    
+    Parameters:
+    -----------
+    data : pd.Series
+        Dữ liệu ordinal
+    order_mapping : dict, optional
+        Mapping từ categories sang numeric values
+        Ví dụ: {'Low': 1, 'Medium': 2, 'High': 3}
+        
+    Returns:
+    --------
+    pd.DataFrame
+        DataFrame chứa distribution by order
+    """
+    value_counts = data.value_counts()
+    
+    if order_mapping:
+        # Sắp xếp theo order
+        ordered_values = sorted(value_counts.index, key=lambda x: order_mapping.get(x, 0))
+        value_counts = value_counts.reindex(ordered_values)
+    else:
+        value_counts = value_counts.sort_index()
+    
+    metrics_df = pd.DataFrame({
+        'Order': range(1, len(value_counts) + 1),
+        'Category': value_counts.index,
+        'Frequency': value_counts.values,
+        'Percentage': (value_counts.values / value_counts.sum() * 100).round(2),
+        'Cumulative_Percentage': (value_counts.values / value_counts.sum() * 100).cumsum().round(2)
+    })
+    
+    metrics_df.attrs['feature_name'] = data.name or 'Unknown'
+    
+    return metrics_df
+
+
+def calculate_target_relationship_discrete(data: pd.DataFrame, feature: str, 
+                                          target: str) -> pd.DataFrame:
+    """
+    Tính metrics quan hệ với TARGET cho biến discrete
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        DataFrame chứa dữ liệu
+    feature : str
+        Tên cột feature
+    target : str
+        Tên cột target (0/1)
+        
+    Returns:
+    --------
+    pd.DataFrame
+        DataFrame chứa các metrics
+    """
+    clean_data = data[[feature, target]].dropna()
+    n_unique = clean_data[feature].nunique()
+    
+    metrics = {
+        'Feature': [feature],
+        'Unique_Values': [n_unique]
+    }
+    
+    # Chi-Squared Test và Cramér's V (cho tất cả discrete)
+    contingency_table = pd.crosstab(clean_data[feature], clean_data[target])
+    chi2, p_value, dof, expected = chi2_contingency(contingency_table)
+    n = contingency_table.sum().sum()
+    cramers_v = np.sqrt(chi2 / (n * (min(contingency_table.shape) - 1)))
+    
+    metrics['Chi2_Statistic'] = [chi2]
+    metrics['Chi2_P_Value'] = [p_value]
+    metrics['Cramers_V'] = [cramers_v]
+    
+    # Thêm metrics cho discrete > 20 giá trị
+    if n_unique > 20:
+        # Point Biserial Correlation
+        # Encode feature as numeric (label encoding)
+        feature_encoded = clean_data[feature].astype('category').cat.codes
+        corr, p_val = pointbiserialr(clean_data[target], feature_encoded)
+        metrics['Point_Biserial_Correlation'] = [corr]
+        metrics['Point_Biserial_P_Value'] = [p_val]
+        
+        # Information Value (IV)
+        iv = calculate_iv(clean_data, feature, target)
+        metrics['Information_Value'] = [iv]
+    
+    return pd.DataFrame(metrics)
+
+
+def calculate_target_relationship_continuous(data: pd.DataFrame, feature: str,
+                                            target: str) -> pd.DataFrame:
+    """
+    Tính metrics quan hệ với TARGET cho biến continuous
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        DataFrame chứa dữ liệu
+    feature : str
+        Tên cột feature
+    target : str
+        Tên cột target (0/1)
+        
+    Returns:
+    --------
+    pd.DataFrame
+        DataFrame chứa các metrics
+    """
+    clean_data = data[[feature, target]].dropna()
+    
+    metrics = {
+        'Feature': [feature]
+    }
+    
+    # Point Biserial Correlation
+    corr, p_val = pointbiserialr(clean_data[target], clean_data[feature])
+    metrics['Point_Biserial_Correlation'] = [corr]
+    metrics['Point_Biserial_P_Value'] = [p_val]
+    
+    # ANOVA F-test
+    groups = [clean_data[clean_data[target] == val][feature].values
+             for val in clean_data[target].unique()]
+    f_stat, p_value = f_oneway(*groups)
+    metrics['ANOVA_F_Statistic'] = [f_stat]
+    metrics['ANOVA_P_Value'] = [p_value]
+    
+    return pd.DataFrame(metrics)
+
+
+def calculate_target_relationship_nominal(data: pd.DataFrame, feature: str,
+                                         target: str) -> pd.DataFrame:
+    """
+    Tính metrics quan hệ với TARGET cho biến nominal
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        DataFrame chứa dữ liệu
+    feature : str
+        Tên cột feature
+    target : str
+        Tên cột target (0/1)
+        
+    Returns:
+    --------
+    pd.DataFrame
+        DataFrame chứa các metrics
+    """
+    clean_data = data[[feature, target]].dropna()
+    
+    metrics = {
+        'Feature': [feature],
+        'Unique_Values': [clean_data[feature].nunique()]
+    }
+    
+    # Chi-Squared Test và Cramér's V
+    contingency_table = pd.crosstab(clean_data[feature], clean_data[target])
+    chi2, p_value, dof, expected = chi2_contingency(contingency_table)
+    n = contingency_table.sum().sum()
+    cramers_v = np.sqrt(chi2 / (n * (min(contingency_table.shape) - 1)))
+    
+    metrics['Chi2_Statistic'] = [chi2]
+    metrics['Chi2_P_Value'] = [p_value]
+    metrics['Cramers_V'] = [cramers_v]
+    
+    # Information Value
+    iv = calculate_iv(clean_data, feature, target)
+    metrics['Information_Value'] = [iv]
+    
+    # Mutual Information
+    mi = mutual_info_score(clean_data[feature].astype(str), clean_data[target])
+    metrics['Mutual_Information'] = [mi]
+    
+    return pd.DataFrame(metrics)
+
+
+def calculate_target_relationship_ordinal(data: pd.DataFrame, feature: str,
+                                         target: str, 
+                                         order_mapping: Optional[Dict] = None) -> pd.DataFrame:
+    """
+    Tính metrics quan hệ với TARGET cho biến ordinal
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        DataFrame chứa dữ liệu
+    feature : str
+        Tên cột feature
+    target : str
+        Tên cột target (0/1)
+    order_mapping : dict, optional
+        Mapping từ categories sang numeric values
+        
+    Returns:
+    --------
+    pd.DataFrame
+        DataFrame chứa các metrics
+    """
+    clean_data = data[[feature, target]].dropna()
+    
+    metrics = {
+        'Feature': [feature]
+    }
+    
+    # Map ordinal to numeric nếu có mapping
+    if order_mapping:
+        feature_numeric = clean_data[feature].map(order_mapping)
+    else:
+        # Tự động encode
+        feature_numeric = clean_data[feature].astype('category').cat.codes
+    
+    # Spearman Correlation
+    spearman_corr, spearman_p = spearmanr(feature_numeric, clean_data[target])
+    metrics['Spearman_Correlation'] = [spearman_corr]
+    metrics['Spearman_P_Value'] = [spearman_p]
+    
+    # Point Biserial Correlation (sau khi map sang numeric)
+    pb_corr, pb_p = pointbiserialr(clean_data[target], feature_numeric)
+    metrics['Point_Biserial_Correlation'] = [pb_corr]
+    metrics['Point_Biserial_P_Value'] = [pb_p]
+    
+    return pd.DataFrame(metrics)
+
+
+def calculate_iv(data: pd.DataFrame, feature: str, target: str) -> float:
+    """
+    Tính Information Value (IV)
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        DataFrame chứa dữ liệu
+    feature : str
+        Tên cột feature
+    target : str
+        Tên cột target (0/1)
+        
+    Returns:
+    --------
+    float
+        Information Value
+    """
+    # Tạo crosstab
+    ct = pd.crosstab(data[feature], data[target], normalize='columns')
+    
+    if ct.shape[1] < 2:
+        return 0.0
+    
+    # Tính WoE và IV
+    good_pct = ct[0] + 0.0001  # Tránh log(0)
+    bad_pct = ct[1] + 0.0001
+    woe = np.log(bad_pct / good_pct)
+    iv = ((bad_pct - good_pct) * woe).sum()
+    
+    return iv
