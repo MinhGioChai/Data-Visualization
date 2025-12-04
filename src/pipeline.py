@@ -811,15 +811,15 @@ class FlexibleCategoricalEncoder(BaseEstimator, TransformerMixin):
                 )
                 oe.fit(X[[col]])
                 self.ordinal_encoders_[col] = oe
-                print(f"Ordinal encoding: {col} with order {self.ordinal_mappings[col]}")
+                #print(f"Ordinal encoding: {col} with order {self.ordinal_mappings[col]}")
         
         # 4. Fit frequency encoders
         for col in self.frequency_encode_cols:
             if col in X.columns:
                 freq_map = X[col].value_counts(normalize=True).to_dict()
-                print(f'frequency map for {col}: {freq_map}')
+                #print(f'frequency map for {col}: {freq_map}')
                 self.frequency_maps_[col] = freq_map
-                print(f"Frequency encoding: {col} ({X[col].nunique()} categories)")
+                #print(f"Frequency encoding: {col} ({X[col].nunique()} categories)")
         
         return self
     
@@ -869,7 +869,7 @@ class FlexibleCategoricalEncoder(BaseEstimator, TransformerMixin):
                 freq_encoded = X[col].map(freq_map).fillna(0)
                 # print(f'freq encoded sample for {col}: {freq_encoded.head()}')
                 freq_df = freq_encoded.rename(col + "_freq").to_frame()
-                print(freq_df.head())
+                #print(freq_df.head())
                 result_dfs.append(freq_df)
 
                 X = X.drop(columns=[col])

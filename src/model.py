@@ -15,7 +15,11 @@ import warnings
 from pathlib import Path
 from typing import Dict, Tuple, Optional, Literal
 import logging
+import importlib
+import pipeline
+importlib.reload(pipeline)
 from pipeline import *
+
 
 warnings.filterwarnings('ignore')
 
@@ -211,7 +215,12 @@ class MLModelTrainer:
         logger.info("Applying SMOTE for class balancing...")
         
         # Choose SMOTE variant based on data type
-        if self.data_type == 'raw' and len(self.categorical_indices) > 0:
+        if (
+                self.data_type == 'raw'
+                and hasattr(self, 'categorical_indices')
+                and self.categorical_indices is not None
+                and len(self.categorical_indices) > 0
+            ):
             # Use SMOTENC for data with categorical features
             smote = SMOTENC(
                 categorical_features=self.categorical_indices,
@@ -664,11 +673,17 @@ def run_experiments(
                 X_train = trainer.prepare_data(X_train, y_train, is_train=True)
                 X_test = trainer.prepare_data(X_test, y_test, is_train=False)
                 
-                # Apply SMOTE to training data only
-                X_train_smote, y_train_smote = trainer.apply_smote(X_train, y_train)
+                # Apply SMOTE only if enabled for this run
+                if use_smote:
+                    logger.info("✅ Applying SMOTE to training data...")
+                    X_train_final, y_train_final = trainer.apply_smote(X_train, y_train)
+                else:
+                    logger.info("⏭️  Skipping SMOTE...")
+                    X_train_final, y_train_final = X_train, y_train
+                
                 
                 # Train
-                trainer.train(X_train_smote, y_train_smote)
+                trainer.train(X_train_final, y_train_final)
                 
                 # Evaluate
                 train_metrics, test_metrics = trainer.print_evaluation(
@@ -724,13 +739,34 @@ def example_with_raw_data_dropna():
     # Run experiments with raw data
     results = run_experiments(
         X, y,
-        models=['xgboost', 'random_forest'],
+        models=['random_forest', 'logistic_regression'],
         data_types=['raw'],
-        use_smote=True
+        use_smote=False
     )
     
     return results
 
+def xgboost_example_with_raw_data():
+    """
+    Example: Train XGBoost model on RAW data
+    """
+    # Load raw data
+    df = pd.read_csv('raw_data/train.csv')
+    
+    
+    # Separate X and y
+    X = df.drop('TARGET', axis=1)
+    y = df['TARGET']
+    
+    # Run experiments with raw data
+    results = run_experiments(
+        X, y,
+        models=['xgboost'],
+        data_types=['raw'],
+        use_smote= False
+    )
+    
+    return results
 
 def example_with_preprocessed_data(pipeline_path: str = 'models/preprocessing_pipeline.pkl'):
     """
@@ -760,48 +796,6 @@ def example_with_preprocessed_data(pipeline_path: str = 'models/preprocessing_pi
     
     return results
 
-
-def example_single_model_raw():
-    """
-    Example: Train a single model on raw data
-    """
-    # Load and prepare data
-    df = pd.read_csv('raw_data/train.csv')
-    df = df.dropna()
-    
-    X = df.drop('TARGET', axis=1)
-    y = df['TARGET']
-    
-    # Initialize trainer
-    trainer = MLModelTrainer(
-        model_type='xgboost',
-        use_smote=True,
-        data_type='raw'
-    )
-    
-    # Split data
-    X_train, X_test, y_train, y_test = trainer.split_data(X, y)
-    
-    # Prepare data (converts object to category)
-    X_train = trainer.prepare_data(X_train, y_train, is_train=True)
-    X_test = trainer.prepare_data(X_test, y_test, is_train=False)
-    
-    # Apply SMOTE
-    X_train_smote, y_train_smote = trainer.apply_smote(X_train, y_train)
-    
-    # Train
-    trainer.train(X_train_smote, y_train_smote)
-    
-    # Evaluate
-    train_metrics, test_metrics = trainer.print_evaluation(
-        X_train, y_train,
-        X_test, y_test
-    )
-    
-    # Save
-    trainer.save_model('models/my_raw_model.pkl')
-    
-    return trainer
 
 
 def example_single_model_preprocessed(pipeline_path: str = 'models/preprocessing_pipeline.pkl'):
@@ -940,6 +934,14 @@ if __name__ == "__main__":
     print("ML TRAINING PIPELINE")
     print("="*80)
     
+# Train on raw data instead
+    print("\nTraining on RAW data drop na as fallback...")
+    results_raw = example_with_raw_data_dropna()
+    print('='*80)
+    print("Training on RAW data not drop na.")
+    results_raw_no_dropna = xgboost_example_with_raw_data()
+    
+    print('\nCompleted examples.')
     # Check if preprocessing pipeline exists
     import os
     pipeline_path = 'models/preprocessing_pipeline.pkl'
@@ -982,10 +984,4 @@ if __name__ == "__main__":
     else:
         print(f"\n⚠️  Preprocessing pipeline not found at: {pipeline_path}")
         print("="*80)
-        # Train on raw data instead
-        print("\nTraining on RAW data drop na as fallback...")
-        results_raw = example_with_raw_data_dropna()
-        # print('='*80)
-        # print("Training on RAW data not drop na.")
-        # results_raw_no_dropna = xgboost_example_with_raw_data()
-        print('\nCompleted all examples.')
+    
