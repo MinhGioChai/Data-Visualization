@@ -117,7 +117,11 @@ def plot_nominal_topk_barchart(data: pd.Series, top_k: int = 10,
                                figsize: tuple = (12, 6),
                                color: str = 'steelblue',
                                others_color: str = 'lightgray',
-                               ax: Optional[plt.Axes] = None):
+                               ax: Optional[plt.Axes] = None,
+                               set_ylim: bool = False,
+                               ylim: Optional[tuple] = None,
+                               all_data: Optional[pd.DataFrame] = None,
+                               columns: Optional[list] = None):
     """
     Vẽ bar chart với Top-K + Others cho biến nominal có nhiều giá trị
     
@@ -137,7 +141,16 @@ def plot_nominal_topk_barchart(data: pd.Series, top_k: int = 10,
         Màu sắc cho "Others"
     ax : plt.Axes, optional
         Axes để vẽ. Nếu None, tạo figure mới
-        
+    set_ylim : bool
+        Nếu True, set y-axis limit chung cho nhiều biểu đồ
+    ylim : tuple, optional
+        Range cho trục y (min, max). Nếu None và set_ylim=True, 
+        sẽ tự động tính toán từ all_data và columns
+    all_data : pd.DataFrame, optional
+        DataFrame chứa tất cả các cột để tính ylim chung
+    columns : list, optional
+        List các tên cột để tính ylim chung
+    
     Returns:
     --------
     plt.Axes
@@ -171,12 +184,34 @@ def plot_nominal_topk_barchart(data: pd.Series, top_k: int = 10,
         pct = (v / total) * 100
         ax.text(i, v, f'{v}\n({pct:.1f}%)', ha='center', va='bottom')
     
+    # Set y-axis limit nếu cần
+    if set_ylim:
+        if ylim is not None:
+            ax.set_ylim(ylim)
+        elif all_data is not None and columns is not None:
+            # Tự động tính toán ylim chung từ tất cả các cột
+            max_freq = 0
+            for col in columns:
+                value_counts_temp = all_data[col].value_counts()
+                # Xét cả trường hợp có "Others"
+                if len(value_counts_temp) > top_k:
+                    top_sum = value_counts_temp.head(top_k).max()
+                    others_sum = value_counts_temp.iloc[top_k:].sum()
+                    max_freq = max(max_freq, top_sum, others_sum)
+                else:
+                    max_freq = max(max_freq, value_counts_temp.max())
+            
+            ax.set_ylim(0, max_freq * 1.2)
+        else:
+            # Tự động tính toán ylim dựa trên max value hiện tại + 20% buffer
+            max_val = plot_data.max()
+            ax.set_ylim(0, max_val * 1.2)
+    
     if ax is None:
         plt.tight_layout()
         plt.show()
     
     return ax
-
 
 def plot_grouped_bar_vs_target(data: pd.DataFrame, feature: str, target: str,
                                title: Optional[str] = None, 
