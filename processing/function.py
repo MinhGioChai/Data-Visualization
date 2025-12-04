@@ -547,6 +547,7 @@ def plot_ordinal_ordered_bar_vs_target(data: pd.DataFrame, feature: str, target:
 
 # ==================== PHẦN 2: HÀM TÍNH METRICS ====================
 
+
 def calculate_continuous_metrics(data: pd.Series, target: Optional[pd.Series] = None) -> pd.DataFrame:
     """
     Tính metrics cho biến continuous
@@ -657,25 +658,24 @@ def calculate_ordinal_metrics(data: pd.Series, order_mapping: Optional[Dict] = N
     
     return metrics_df
 
-
-def calculate_target_relationship_discrete(data: pd.DataFrame, feature: str, 
+def calculate_target_relationship_discrete_few_nunique(data: pd.DataFrame, feature: str, 
                                           target: str) -> pd.DataFrame:
     """
-    Tính metrics quan hệ với TARGET cho biến discrete
+    TÃ­nh metrics quan há»‡ vá»›i TARGET cho biáº¿n discrete
     
     Parameters:
     -----------
     data : pd.DataFrame
-        DataFrame chứa dữ liệu
+        DataFrame chá»©a dá»¯ liá»‡u
     feature : str
-        Tên cột feature
+        TÃªn cá»™t feature
     target : str
-        Tên cột target (0/1)
+        TÃªn cá»™t target (0/1)
         
     Returns:
     --------
     pd.DataFrame
-        DataFrame chứa các metrics
+        DataFrame chá»©a cÃ¡c metrics
     """
     clean_data = data[[feature, target]].dropna()
     n_unique = clean_data[feature].nunique()
@@ -685,7 +685,7 @@ def calculate_target_relationship_discrete(data: pd.DataFrame, feature: str,
         'Unique_Values': [n_unique]
     }
     
-    # Chi-Squared Test và Cramér's V (cho tất cả discrete)
+    # Chi-Squared Test vÃ  CramÃ©r's V 
     contingency_table = pd.crosstab(clean_data[feature], clean_data[target])
     chi2, p_value, dof, expected = chi2_contingency(contingency_table)
     n = contingency_table.sum().sum()
@@ -694,21 +694,48 @@ def calculate_target_relationship_discrete(data: pd.DataFrame, feature: str,
     metrics['Chi2_Statistic'] = [chi2]
     metrics['Chi2_P_Value'] = [p_value]
     metrics['Cramers_V'] = [cramers_v]
+
     
-    # Thêm metrics cho discrete > 20 giá trị
-    if n_unique > 20:
-        # Point Biserial Correlation
-        # Encode feature as numeric (label encoding)
-        feature_encoded = clean_data[feature].astype('category').cat.codes
-        corr, p_val = pointbiserialr(clean_data[target], feature_encoded)
-        metrics['Point_Biserial_Correlation'] = [corr]
-        metrics['Point_Biserial_P_Value'] = [p_val]
-        
-        # Information Value (IV)
-        iv = calculate_iv(clean_data, feature, target)
-        metrics['Information_Value'] = [iv]
     
     return pd.DataFrame(metrics)
+def calculate_target_relationship_discrete_many_nunique(data: pd.DataFrame, feature: str, 
+                                          target: str) -> pd.DataFrame:
+    """
+    TÃ­nh metrics quan há»‡ vá»›i TARGET cho biáº¿n discrete
+    
+    Parameters:
+    -----------
+    data : pd.DataFrame
+        DataFrame chá»©a dá»¯ liá»‡u
+    feature : str
+        TÃªn cá»™t feature
+    target : str
+        TÃªn cá»™t target (0/1)
+        
+    Returns:
+    --------
+    pd.DataFrame
+        DataFrame chá»©a cÃ¡c metrics
+    """
+    clean_data = data[[feature, target]].dropna()
+    n_unique = clean_data[feature].nunique()
+    
+    metrics = {
+        'Feature': [feature],
+        'Unique_Values': [n_unique]
+    }
+    # Point Biserial Correlation
+    # Encode feature as numeric (label encoding)
+    feature_encoded = clean_data[feature].astype('category').cat.codes
+    corr, p_val = pointbiserialr(clean_data[target], feature_encoded)
+    metrics['Point_Biserial_Correlation'] = [corr]
+    metrics['Point_Biserial_P_Value'] = [p_val]
+        
+    # Information Value (IV)
+    iv = calculate_iv(clean_data, feature, target)
+    metrics['Information_Value'] = [iv]
+    return pd.DataFrame(metrics)
+
 
 
 def calculate_target_relationship_continuous(data: pd.DataFrame, feature: str,
