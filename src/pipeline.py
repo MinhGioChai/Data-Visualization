@@ -53,7 +53,7 @@ class BasicImputerTransformer(BaseEstimator, TransformerMixin):
         
         # ORGANISATION_TYPE
         if self.org_type_mode_ is not None:
-            X['ORGANISATION_TYPE'] = X['ORGANIZATION_TYPE'].fillna(self.org_type_mode_)
+            X['ORGANIZATION_TYPE'] = X['ORGANIZATION_TYPE'].fillna(self.org_type_mode_)
         
         return X
 
@@ -871,6 +871,8 @@ class FlexibleCategoricalEncoder(BaseEstimator, TransformerMixin):
                 freq_df = freq_encoded.rename(col + "_freq").to_frame()
                 print(freq_df.head())
                 result_dfs.append(freq_df)
+
+                X = X.drop(columns=[col])
         # Combine all encoded features
         X_transformed = pd.concat(result_dfs, axis=1)
         
@@ -996,7 +998,15 @@ if __name__ == "__main__":
             'NAME_CONTRACT_TYPE',    # Low cardinality: Cash loans, Revolving loans
             'NAME_INCOME_TYPE',      # Low cardinality: ~8 types
             'NAME_FAMILY_STATUS',    # Low cardinality: ~6 types
-            'NAME_HOUSING_TYPE'      # Low cardinality: ~6 types
+            'NAME_HOUSING_TYPE', # 7 type
+            'NAME_TYPE_SUITE',
+            'WEEKDAY_APPR_PROCESS_START',
+            'AMT_REQ_CREDIT_BUREAU_HOUR_CAT', 
+            'AMT_REQ_CREDIT_BUREAU_DAY_CAT',      
+            'AMT_REQ_CREDIT_BUREAU_WEEK_CAT', 
+            'AMT_REQ_CREDIT_BUREAU_MON_CAT',      
+            'AMT_REQ_CREDIT_BUREAU_QRT_CAT', 
+            'AMT_REQ_CREDIT_BUREAU_YEAR_CAT'    
         ],
         'ordinal_encode_cols': [
             'NAME_EDUCATION_TYPE'    # Has natural ordering

@@ -457,102 +457,94 @@ def plot_ordinal_ordered_bar_vs_target(data: pd.DataFrame, feature: str, target:
                                       figsize: tuple = (14, 6),
                                       count_color: str = 'steelblue',
                                       rate_color: str = 'coral',
+                                      ordinal_order: Optional[dict] = None,
                                       ax: Optional[plt.Axes] = None):
     """
-    Vẽ ordered bar chart cho biến ordinal/continuous vs TARGET
-    
-    Parameters:
-    -----------
-    data : pd.DataFrame
-        DataFrame chứa dữ liệu
-    feature : str
-        Tên cột feature (ordinal/continuous)
-    target : str
-        Tên cột target (0/1)
-    n_bins : int
-        Số lượng bins (nếu là continuous)
-    title : str
-        Tiêu đề biểu đồ
-    figsize : tuple
-        Kích thước figure (chỉ dùng khi ax=None)
-    count_color : str
-        Màu cho count bars
-    rate_color : str
-        Màu cho default rate bars
-    ax : plt.Axes, optional
-        Axes để vẽ. Nếu None, tạo figure mới
-        
-    Returns:
-    --------
-    tuple
-        (ax1, ax2) - Hai axes objects
+    Vẽ ordered bar chart cho biến ordinal/continuous vs TARGET với hỗ trợ custom ordinal mapping
     """
+
     plot_data = data[[feature, target]].dropna()
-    
-    # Kiểm tra xem có phải continuous không
-    if plot_data[feature].dtype in ['float64', 'float32'] or plot_data[feature].nunique() > 20:
-        # Chia thành bins
-        plot_data['bin'] = pd.qcut(plot_data[feature], q=n_bins, duplicates='drop')
-        group_col = 'bin'
+
+    # ---- NEW: Apply ordinal ordering if mapping is provided ---- #
+    if ordinal_order is not None:
+        # Only keep valid categories in the map
+        valid_mask = plot_data[feature].isin(ordinal_order.keys())
+        plot_data = plot_data[valid_mask].copy()
+
+        # Create an ordered category column
+        plot_data["__ordinal_code__"] = plot_data[feature].map(ordinal_order)
+        group_col = "__ordinal_code__"
+
     else:
-        # Giữ nguyên nếu là ordinal
-        group_col = feature
-    
-    # Tính default rate và count
+        # Detect continuous → bin it
+        if plot_data[feature].dtype in ['float64', 'float32'] or plot_data[feature].nunique() > 20:
+            plot_data['bin'] = pd.qcut(plot_data[feature], q=n_bins, duplicates='drop')
+            group_col = 'bin'
+        else:
+            group_col = feature
+
+    # Compute stats
     bin_stats = plot_data.groupby(group_col).agg({
         target: ['mean', 'count']
     })
     bin_stats.columns = ['default_rate', 'count']
     bin_stats['default_rate'] *= 100
-    
-    # Vẽ biểu đồ
+
+    # If ordinal mapping is used → sort by defined order
+    if ordinal_order is not None:
+        bin_stats = bin_stats.sort_index()
+        # Convert back index to category names
+        inv_map = {v: k for k, v in ordinal_order.items()}
+        xtick_labels = [inv_map[i] for i in bin_stats.index]
+    else:
+        # For continuous bins
+        if group_col == 'bin':
+            xtick_labels = [f'{interval.left:.2f}-{interval.right:.2f}' for interval in bin_stats.index]
+        else:
+            xtick_labels = bin_stats.index.astype(str)
+
+    # Plotting
     if ax is None:
         fig, ax1 = plt.subplots(figsize=figsize)
     else:
         ax1 = ax
-    
+
     x = np.arange(len(bin_stats))
     width = 0.35
-    
-    # Bar 1: Counts
-    ax1.bar(x - width/2, bin_stats['count'], width, label='Count',
-            color=count_color, edgecolor='black')
-    ax1.set_xlabel(f'{feature} (Ordered)')
-    ax1.set_ylabel('Count', color=count_color)
+
+    # Count bars
+    ax1.bar(x - width/2, bin_stats['count'], width, color=count_color,
+            edgecolor='black', label="Count")
+    ax1.set_ylabel("Count", color=count_color)
     ax1.tick_params(axis='y', labelcolor=count_color)
     ax1.set_xticks(x)
-    
-    # Format labels
-    if group_col == 'bin':
-        labels = [f'{interval.left:.2f}-{interval.right:.2f}' for interval in bin_stats.index]
-    else:
-        labels = bin_stats.index
-    ax1.set_xticklabels(labels, rotation=45, ha='right')
+    ax1.set_xticklabels(xtick_labels, rotation=45, ha='right')
     ax1.grid(axis='y', alpha=0.3)
-    
-    # Bar 2: Default rate
+
+    # Default rate bars
     ax2 = ax1.twinx()
-    ax2.bar(x + width/2, bin_stats['default_rate'], width, label='Default Rate (%)',
-            color=rate_color, edgecolor='black')
-    ax2.set_ylabel('Default Rate (%)', color=rate_color)
+    ax2.bar(x + width/2, bin_stats['default_rate'], width, color=rate_color,
+            edgecolor='black', label="Default Rate (%)")
+    ax2.set_ylabel("Default Rate (%)", color=rate_color)
     ax2.tick_params(axis='y', labelcolor=rate_color)
-    
-    # Thêm trend line cho default rate
-    ax2.plot(x, bin_stats['default_rate'], 'ro-', linewidth=2, markersize=8, 
-             label='Trend', alpha=0.6)
-    
+
+    # Trend line
+    ax2.plot(x, bin_stats['default_rate'], 'ro-', linewidth=2, markersize=8,
+             label="Trend", alpha=0.6)
+
     ax1.set_title(title or f'{feature} - Ordered Analysis vs {target}')
-    
-    # Legends
+
+    # Legend
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-    
+
     if ax is None:
         plt.tight_layout()
         plt.show()
-    
+
     return ax1, ax2
+
 # ==================== PHẦN 2: HÀM TÍNH METRICS ====================
 
 def calculate_continuous_metrics(data: pd.Series, target: Optional[pd.Series] = None) -> pd.DataFrame:
