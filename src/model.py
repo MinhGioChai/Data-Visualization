@@ -4,10 +4,10 @@ import xgboost as xgb
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import (
-    accuracy_score, roc_auc_score, classification_report,
-    confusion_matrix, precision_score, recall_score, f1_score
-)
+
+from sklearn.metrics import (accuracy_score, roc_auc_score, classification_report, 
+                             confusion_matrix, roc_curve, precision_recall_curve, 
+                             f1_score, precision_score, recall_score)
 from sklearn.preprocessing import StandardScaler
 from imblearn.over_sampling import SMOTE, SMOTENC
 import joblib
@@ -15,7 +15,12 @@ import warnings
 from pathlib import Path
 from typing import Dict, Tuple, Optional, Literal
 import logging
+import importlib
+import pipeline
+importlib.reload(pipeline)
 from pipeline import *
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 warnings.filterwarnings('ignore')
 
@@ -105,9 +110,9 @@ class MLModelTrainer:
         
         # Handle data based on type
         if self.data_type == 'raw':
-            if self.model_type == 'logistic_regression':
+            if self.model_type in['random_forest', 'logistic_regression']:
                 X = X.select_dtypes(include=[np.number])
-                logger.info(f"Dropping non-numeric columns for Logistic Regression on raw data")
+                logger.info(f"Dropping non-numeric columns for Logistic Regression or Rf on raw data")
             # Convert object columns to category for SMOTENC
             else:    
                 for col in X.columns:
@@ -131,23 +136,23 @@ class MLModelTrainer:
                 logger.info("Using preprocessed data - all features are numeric")
         
         # Apply scaling for Logistic Regression with preprocessed data
-        if self.model_type == 'logistic_regression' and self.data_type == 'preprocessed':
-            if is_train:
-                self.scaler = StandardScaler()
-                X = pd.DataFrame(
-                    self.scaler.fit_transform(X),
-                    columns=X.columns,
-                    index=X.index
-                )
-                logger.info("Fitted StandardScaler for Logistic Regression")
-            else:
-                if self.scaler is not None:
-                    X = pd.DataFrame(
-                        self.scaler.transform(X),
-                        columns=X.columns,
-                        index=X.index
-                    )
-                    logger.info("Applied StandardScaler for Logistic Regression")
+        # if self.model_type == 'logistic_regression' and self.data_type == 'preprocessed':
+        #     if is_train:
+        #         self.scaler = StandardScaler()
+        #         X = pd.DataFrame(
+        #             self.scaler.fit_transform(X),
+        #             columns=X.columns,
+        #             index=X.index
+        #         )
+        #         logger.info("Fitted StandardScaler for Logistic Regression")
+        #     else:
+        #         if self.scaler is not None:
+        #             X = pd.DataFrame(
+        #                 self.scaler.transform(X),
+        #                 columns=X.columns,
+        #                 index=X.index
+        #             )
+        #             logger.info("Applied StandardScaler for Logistic Regression")
         
         return X
     
@@ -211,7 +216,12 @@ class MLModelTrainer:
         logger.info("Applying SMOTE for class balancing...")
         
         # Choose SMOTE variant based on data type
-        if self.data_type == 'raw' and len(self.categorical_indices) > 0:
+        if (
+                self.data_type == 'raw'
+                and hasattr(self, 'categorical_indices')
+                and self.categorical_indices is not None
+                and len(self.categorical_indices) > 0
+            ):
             # Use SMOTENC for data with categorical features
             smote = SMOTENC(
                 categorical_features=self.categorical_indices,
@@ -664,22 +674,241 @@ def run_experiments(
                 X_train = trainer.prepare_data(X_train, y_train, is_train=True)
                 X_test = trainer.prepare_data(X_test, y_test, is_train=False)
                 
-                # Apply SMOTE to training data only
-                X_train_smote, y_train_smote = trainer.apply_smote(X_train, y_train)
+                # Apply SMOTE only if enabled for this run
+                if use_smote:
+                    logger.info("✅ Applying SMOTE to training data...")
+                    X_train_final, y_train_final = trainer.apply_smote(X_train, y_train)
+                else:
+                    logger.info("⏭️  Skipping SMOTE...")
+                    X_train_final, y_train_final = X_train, y_train
+                
                 
                 # Train
-                trainer.train(X_train_smote, y_train_smote)
+                trainer.train(X_train_final, y_train_final)
                 
                 # Evaluate
                 train_metrics, test_metrics = trainer.print_evaluation(
                     X_train, y_train,
                     X_test, y_test
                 )
-                
+
                 # Save model
                 model_path = f"models/{model_type}_{data_type}_model.pkl"
                 trainer.save_model(model_path, preprocessing_pipeline=preprocessing_pipeline if data_type == 'preprocessed' else None)
                 
+                                # -----------------------------
+                # VISUALIZATION SECTION
+                # -----------------------------
+                model = trainer.model
+
+                # Predictions
+                y_test_pred, y_test_proba = trainer.predict(X_test)
+                y_train_pred, y_train_proba = trainer.predict(X_train)
+
+                test_auc = roc_auc_score(y_test, y_test_proba)
+                train_auc = roc_auc_score(y_train, y_train_proba)
+
+                train_acc = accuracy_score(y_train, y_train_pred)
+                test_acc = accuracy_score(y_test, y_test_pred)
+                train_f1 = f1_score(y_train, y_train_pred)
+                test_f1 = f1_score(y_test, y_test_pred)
+                train_precision = precision_score(y_train, y_train_pred)
+                test_precision = precision_score(y_test, y_test_pred)
+                train_recall = recall_score(y_train, y_train_pred)
+                test_recall = recall_score(y_test, y_test_pred)
+
+
+                # ===============================================================
+                # CASE 1 — LOGISTIC REGRESSION VISUALIZATION
+                # ===============================================================
+                if model_type == "logistic_regression":
+
+                    # Extract coefficients
+                    coefficients = model.coef_[0]
+                    feature_importance = pd.DataFrame({
+                        'feature': X_train.columns,
+                        'coefficient': coefficients,
+                        'abs_coefficient': np.abs(coefficients)
+                    }).sort_values('abs_coefficient', ascending=False)
+
+                    print("\n🎯 Top 15 Important Features (by abs(coef)):")
+                    print(feature_importance.head(15)[['feature', 'coefficient']].to_string(index=False))
+
+                    # ---------------------------------------
+                    # PLOT
+                    # ---------------------------------------
+                    fig = plt.figure(figsize=(16, 12))
+                    plt.suptitle(f"Logistic Regression With {data_type.title()} Performance")
+
+                    # 1 — Top Coefficient Plot
+                    ax1 = plt.subplot(2, 3, 1)
+                    top = feature_importance.head(15)
+                    colors = ['#DD1C1A' if c > 0 else '#06AED5' for c in top['coefficient']]
+                    sns.barplot(data=top, y='feature', x='coefficient', palette=colors, ax=ax1)
+                    ax1.axvline(0, color='black')
+                    ax1.set_title("Top 15 Feature Coefficients")
+
+                    # 2 — Confusion Matrix
+                    ax2 = plt.subplot(2, 3, 2)
+                    cm = confusion_matrix(y_test, y_test_pred)
+                    sns.heatmap(cm, annot=True, fmt='d', cmap="Blues", cbar=False, ax=ax2)
+                    ax2.set_title("Confusion Matrix (Test)")
+
+                    # 3 — ROC Curve
+                    ax3 = plt.subplot(2, 3, 3)
+                    fpr, tpr, _ = roc_curve(y_test, y_test_proba)
+                    ax3.plot(fpr, tpr, label=f"AUC = {test_auc:.4f}", color="#2E86AB")
+                    ax3.plot([0,1],[0,1],"k--")
+                    ax3.set_title("ROC Curve")
+                    ax3.legend()
+
+                    # 4 — Precision Recall Curve
+                    ax4 = plt.subplot(2, 3, 4)
+                    precision, recall, _ = precision_recall_curve(y_test, y_test_proba)
+                    ax4.plot(recall, precision, color="#A23B72")
+                    ax4.set_title("Precision-Recall Curve")
+
+                    # 5 — Probability Distribution
+                    ax5 = plt.subplot(2, 3, 5)
+                    ax5.hist(y_test_proba[y_test == 0], bins=40, alpha=0.7, label="Class 0")
+                    ax5.hist(y_test_proba[y_test == 1], bins=40, alpha=0.7, label="Class 1")
+                    ax5.legend()
+                    ax5.set_title("Prediction Probability Distribution")
+
+                    # 6 — Metrics Comparison
+                    ax6 = plt.subplot(2, 3, 6)
+                    metrics_df = pd.DataFrame({
+                        'Metric': ['Accuracy','ROC-AUC','F1','Precision','Recall'],
+                        'Train': [train_acc, train_auc, train_f1, train_precision, train_recall],
+                        'Test':  [test_acc, test_auc, test_f1, test_precision, test_recall]
+                    })
+                    x = np.arange(len(metrics_df))
+                    w = 0.35
+                    ax6.bar(x-w/2, metrics_df['Train'], w, label="Train", color="#06AED5")
+                    ax6.bar(x+w/2, metrics_df['Test'], w, label="Test", color="#DD1C1A")
+                    ax6.set_xticks(x)
+                    ax6.set_xticklabels(metrics_df['Metric'], rotation=45)
+                    ax6.legend()
+                    ax6.set_ylim([0, 1.05])
+                    ax6.set_title("Train vs Test Performance")
+
+                    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+
+                    plot_dir = Path("plots")
+                    plot_dir.mkdir(exist_ok=True)
+                    plot_path = plot_dir / f"{model_type}_{data_type}_performance.png"
+
+                    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+                    plt.close()
+
+                    results[key]["plot_path"] = str(plot_path)
+                    print(f"📁 Logistic Regression Plot saved → {plot_path}")
+
+
+                # ===============================================================
+                # CASE 2 — TREE MODELS (RandomForest, XGBoost)
+                # ===============================================================
+                else:
+                    # Use your earlier feature importance visualization
+                    # ---------------------------------------
+                    # Feature Importances
+                    # ---------------------------------------
+                    if hasattr(model, "feature_importances_"):
+                        feature_importance = pd.DataFrame({
+                            "feature": X_train.columns,
+                            "importance": model.feature_importances_
+                        }).sort_values("importance", ascending=False)
+                    else:
+                        feature_importance = None
+
+                    fig = plt.figure(figsize=(16, 12))
+                    plt.grid(False)
+                    plt.suptitle(f"{model_type.replace('_',' ').title()} With {data_type.title()} Performance",
+                                 fontsize=18, fontweight='bold', y=0.98)
+                    # 1. Feature Importance Plot
+                    ax1 = plt.subplot(2, 3, 1)
+                    top_features = feature_importance.head(15)
+                    sns.barplot(data=top_features, y='feature', x='importance', palette='viridis', ax=ax1)
+                    ax1.set_title('Top 15 Feature Importances', fontsize=14, fontweight='bold')
+                    ax1.set_xlabel('Importance Score', fontsize=11)
+                    ax1.set_ylabel('Features', fontsize=11)
+
+                    # 2. Confusion Matrix
+                    ax2 = plt.subplot(2, 3, 2)
+                    cm = confusion_matrix(y_test, y_test_pred)
+                    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False, ax=ax2,
+                                annot_kws={'size': 14, 'weight': 'bold'})
+                    ax2.set_title('Confusion Matrix (Test Set)', fontsize=14, fontweight='bold')
+                    ax2.set_ylabel('Actual', fontsize=11)
+                    ax2.set_xlabel('Predicted', fontsize=11)
+
+                    # 3. ROC Curve
+                    ax3 = plt.subplot(2, 3, 3)
+                    fpr, tpr, _ = roc_curve(y_test, y_test_proba)
+                    ax3.plot(fpr, tpr, label=f'ROC Curve (AUC = {test_auc:.4f})', linewidth=2.5, color='#2E86AB')
+                    ax3.plot([0, 1], [0, 1], 'k--', label='Random Classifier', linewidth=1.5, alpha=0.7)
+                    ax3.set_xlabel('False Positive Rate', fontsize=11)
+                    ax3.set_ylabel('True Positive Rate', fontsize=11)
+                    ax3.set_title('ROC Curve', fontsize=14, fontweight='bold')
+                    ax3.legend(loc='lower right', fontsize=10)
+
+                    # 4. Precision-Recall Curve
+                    ax4 = plt.subplot(2, 3, 4)
+                    precision, recall, _ = precision_recall_curve(y_test, y_test_proba)
+                    ax4.plot(recall, precision, linewidth=2.5, color='#A23B72')
+                    ax4.set_xlabel('Recall', fontsize=11)
+                    ax4.set_ylabel('Precision', fontsize=11)
+                    ax4.set_title('Precision-Recall Curve', fontsize=14, fontweight='bold')
+
+                    # 5. Prediction Probability Distribution
+                    ax5 = plt.subplot(2, 3, 5)
+                    ax5.hist(y_test_proba[y_test == 0], bins=50, alpha=0.7, label='Class 0 (No Default)', 
+                            color='#06AED5', edgecolor='black', linewidth=0.5)
+                    ax5.hist(y_test_proba[y_test == 1], bins=50, alpha=0.7, label='Class 1 (Default)', 
+                            color='#DD1C1A', edgecolor='black', linewidth=0.5)
+                    ax5.set_xlabel('Predicted Probability', fontsize=11)
+                    ax5.set_ylabel('Frequency', fontsize=11)
+                    ax5.set_title('Distribution of Predicted Probabilities', fontsize=14, fontweight='bold')
+                    ax5.legend(fontsize=10)
+
+                    # 6. Performance Metrics Comparison
+                    ax6 = plt.subplot(2, 3, 6)
+                    metrics_df = pd.DataFrame({
+                        'Metric': ['Accuracy', 'ROC-AUC', 'F1-Score', 'Precision', 'Recall'],
+                        'Train': [train_acc, train_auc, train_f1, train_precision, train_recall],
+                        'Test': [test_acc, test_auc, test_f1, test_precision, test_recall]
+                    })
+                    x = np.arange(len(metrics_df))
+                    width = 0.35
+                    bars1 = ax6.bar(x - width/2, metrics_df['Train'], width, label='Train', color='#06AED5', alpha=0.8)
+                    bars2 = ax6.bar(x + width/2, metrics_df['Test'], width, label='Test', color='#DD1C1A', alpha=0.8)
+                    ax6.set_xlabel('Metrics', fontsize=11)
+                    ax6.set_ylabel('Score', fontsize=11)
+                    ax6.set_title('Train vs Test Performance', fontsize=14, fontweight='bold')
+                    ax6.set_xticks(x)
+                    ax6.set_xticklabels(metrics_df['Metric'], rotation=45, ha='right')
+                    ax6.legend(fontsize=10)
+                    ax6.set_ylim([0, 1.05])
+
+                    # Add value labels on bars
+                    for bars in [bars1, bars2]:
+                        for bar in bars:
+                            height = bar.get_height()
+                            ax6.text(bar.get_x() + bar.get_width()/2., height,
+                                    f'{height:.3f}', ha='center', va='bottom', fontsize=8)
+
+                    plt.tight_layout()
+                    plot_dir = Path("plots")
+                    plot_dir.mkdir(exist_ok=True)
+                    plot_path = plot_dir / f"{model_type}_{data_type}_performance.png"
+
+                    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+                    plt.close()
+
+        
+                    print(f"📁 Tree Model Plot saved → {plot_path}")
+
+
                 # Store results
                 key = f"{model_type}_{data_type}"
                 results[key] = {
@@ -724,13 +953,34 @@ def example_with_raw_data_dropna():
     # Run experiments with raw data
     results = run_experiments(
         X, y,
-        models=['xgboost', 'random_forest'],
+        models=['random_forest', 'logistic_regression'],
         data_types=['raw'],
-        use_smote=True
+        use_smote=False
     )
     
     return results
 
+def xgboost_example_with_raw_data():
+    """
+    Example: Train XGBoost model on RAW data
+    """
+    # Load raw data
+    df = pd.read_csv('raw_data/train.csv')
+    
+    
+    # Separate X and y
+    X = df.drop('TARGET', axis=1)
+    y = df['TARGET']
+    
+    # Run experiments with raw data
+    results = run_experiments(
+        X, y,
+        models=['xgboost'],
+        data_types=['raw'],
+        use_smote= False
+    )
+    
+    return results
 
 def example_with_preprocessed_data(pipeline_path: str = 'models/preprocessing_pipeline.pkl'):
     """
@@ -760,48 +1010,6 @@ def example_with_preprocessed_data(pipeline_path: str = 'models/preprocessing_pi
     
     return results
 
-
-def example_single_model_raw():
-    """
-    Example: Train a single model on raw data
-    """
-    # Load and prepare data
-    df = pd.read_csv('raw_data/train.csv')
-    df = df.dropna()
-    
-    X = df.drop('TARGET', axis=1)
-    y = df['TARGET']
-    
-    # Initialize trainer
-    trainer = MLModelTrainer(
-        model_type='xgboost',
-        use_smote=True,
-        data_type='raw'
-    )
-    
-    # Split data
-    X_train, X_test, y_train, y_test = trainer.split_data(X, y)
-    
-    # Prepare data (converts object to category)
-    X_train = trainer.prepare_data(X_train, y_train, is_train=True)
-    X_test = trainer.prepare_data(X_test, y_test, is_train=False)
-    
-    # Apply SMOTE
-    X_train_smote, y_train_smote = trainer.apply_smote(X_train, y_train)
-    
-    # Train
-    trainer.train(X_train_smote, y_train_smote)
-    
-    # Evaluate
-    train_metrics, test_metrics = trainer.print_evaluation(
-        X_train, y_train,
-        X_test, y_test
-    )
-    
-    # Save
-    trainer.save_model('models/my_raw_model.pkl')
-    
-    return trainer
 
 
 def example_single_model_preprocessed(pipeline_path: str = 'models/preprocessing_pipeline.pkl'):
@@ -932,14 +1140,19 @@ def example_load_and_predict(
 
 
 if __name__ == "__main__":
-    """
-    USAGE: Assumes preprocessing pipeline is already saved at 'models/preprocessing_pipeline.pkl'
-    """
     
     print("\n" + "="*80)
     print("ML TRAINING PIPELINE")
     print("="*80)
     
+# Train on raw data instead
+    print("\nTraining on RAW data drop na as fallback...")
+    results_raw = example_with_raw_data_dropna()
+    print('='*80)
+    print("Training on RAW data not drop na.")
+    results_raw_no_dropna = xgboost_example_with_raw_data()
+    
+    print('\nCompleted examples.')
     # Check if preprocessing pipeline exists
     import os
     pipeline_path = 'models/preprocessing_pipeline.pkl'
@@ -982,10 +1195,4 @@ if __name__ == "__main__":
     else:
         print(f"\n⚠️  Preprocessing pipeline not found at: {pipeline_path}")
         print("="*80)
-        # Train on raw data instead
-        print("\nTraining on RAW data drop na as fallback...")
-        results_raw = example_with_raw_data_dropna()
-        # print('='*80)
-        # print("Training on RAW data not drop na.")
-        # results_raw_no_dropna = xgboost_example_with_raw_data()
-        print('\nCompleted all examples.')
+    
