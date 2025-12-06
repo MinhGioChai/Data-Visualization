@@ -353,7 +353,7 @@ class DaysAbsConverter(BaseEstimator, TransformerMixin):
         # Convert negative values to positive
         if self.days_cols_:
             X_out[self.days_cols_] = X_out[self.days_cols_].abs()
-        
+
         return X_out
 
 class CreditBureauProcessor(BaseEstimator, TransformerMixin):
