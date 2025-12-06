@@ -242,7 +242,7 @@ class HourBinner(BaseEstimator, TransformerMixin):
         X = X.copy()
         
         def bin_hour(x):
-            if x < 6:
+            if 0 <= x < 6:
                 return "Late_Night"
             elif x < 12:
                 return "Morning"
