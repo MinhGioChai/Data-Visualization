@@ -920,8 +920,8 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None, m
         ('employment_imputer', EmploymentImputer()),
         ('occupation_imputer', OccupationImputer()),
         # Choose either KNN or Simple imputer for EXT_SOURCE
-        # ('ext_knn_imputer', ExtSourceKNNImputer(k=5, top_n=5)),
-        ('ext_simple_imputer', SimpleImputerTransformer(columns=ext_cols, strategy='median')),
+        ('ext_knn_imputer', ExtSourceKNNImputer(k=5, top_n=5)),
+        #('ext_simple_imputer', SimpleImputerTransformer(columns=ext_cols, strategy='median')),
         ('social_simple_imputer', SimpleImputerTransformer(columns=cols_social, strategy='median')),
         ('weekday', WeekdayEncoder()),
         ('hour_bin', HourBinner()),
