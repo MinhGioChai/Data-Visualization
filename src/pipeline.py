@@ -8,6 +8,19 @@ from sklearn.model_selection import train_test_split
 from pathlib import Path
 import joblib
 
+class DropcolumnsTransformer(BaseEstimator, TransformerMixin):
+    """Drop specified columns from the DataFrame"""
+    
+    def __init__(self, columns):
+        self.columns = columns
+    
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        X = X.copy()
+        X = X.drop(columns=self.columns, errors='ignore')
+        return X
 
 class BasicImputerTransformer(BaseEstimator, TransformerMixin):
     """Handle basic missing value imputation for specific columns"""
@@ -56,7 +69,107 @@ class BasicImputerTransformer(BaseEstimator, TransformerMixin):
             X['ORGANIZATION_TYPE'] = X['ORGANIZATION_TYPE'].fillna(self.org_type_mode_)
         
         return X
+class WeekdayEncoder(BaseEstimator, TransformerMixin):
+    """
+    Convert weekday to cyclical encoding (sin/cos).
+    """
+    
+    def __init__(self, feature='WEEKDAY_APPR_PROCESS_START'):
+        self.feature = feature
+        self.weekday_map = {
+            'MONDAY': 0, 'TUESDAY': 1, 'WEDNESDAY': 2,
+            'THURSDAY': 3, 'FRIDAY': 4, 'SATURDAY': 5, 'SUNDAY': 6
+        }
+    
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        X_out = X.copy()
+        
+        # Map weekday names to numbers
+        X_out['WEEKDAY_NUM'] = X_out[self.feature].map(self.weekday_map)
+        
+        # Cyclical encoding
+        X_out['WEEKDAY_SIN'] = np.sin(2 * np.pi * X_out['WEEKDAY_NUM'] / 7)
+        X_out['WEEKDAY_COS'] = np.cos(2 * np.pi * X_out['WEEKDAY_NUM'] / 7)
+        
+        # Drop original columns
+        X_out = X_out.drop(columns=[self.feature, 'WEEKDAY_NUM'])
+        
+        return X_out
 
+
+class HourBinner(BaseEstimator, TransformerMixin):
+    """
+    Bin hours into time periods.
+    """
+    
+    def __init__(self, hour_col='HOUR_APPR_PROCESS_START', bin_col='HOUR_APPR_PROCESS_BIN'):
+        self.hour_col = hour_col
+        self.bin_col = bin_col
+    
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        X_out = X.copy()
+        
+        def bin_hour(x):
+            if 0 <= x < 6:
+                return "Late_Night"
+            elif x < 12:
+                return "Morning"
+            elif x < 18:
+                return "Afternoon"
+            else:
+                return "Evening"
+        
+        X_out[self.bin_col] = X_out[self.hour_col].apply(bin_hour)
+        
+        return X_out
+
+
+class HourBinEncoder(BaseEstimator, TransformerMixin):
+    """
+    One-Hot Encode binned hour feature.
+    """
+    
+    def __init__(self, bin_col='HOUR_APPR_PROCESS_BIN', prefix='HOUR_BIN', drop_first=False):
+        self.bin_col = bin_col
+        self.prefix = prefix
+        self.drop_first = drop_first
+        self.categories_ = None
+    
+    def fit(self, X, y=None):
+        # Store unique categories seen during fit
+        self.categories_ = sorted(X[self.bin_col].unique())
+        return self
+    
+    def transform(self, X):
+        X_out = X.copy()
+        
+        # Remove old OHE columns if they exist
+        cols_to_remove = [col for col in X_out.columns if col.startswith(self.prefix + "_")]
+        X_out = X_out.drop(columns=cols_to_remove, errors='ignore')
+        
+        # Create One-Hot Encoding
+        df_ohe = pd.get_dummies(
+            X_out[self.bin_col],
+            prefix=self.prefix,
+            drop_first=self.drop_first
+        )
+        
+        # Ensure consistency with fit categories
+        for cat in self.categories_:
+            col_name = f"{self.prefix}_{cat}"
+            if col_name not in df_ohe.columns and not self.drop_first:
+                df_ohe[col_name] = 0
+        
+        # Concatenate with original DataFrame
+        X_out = pd.concat([X_out, df_ohe], axis=1)
+        X_out.drop(columns=[self.bin_col], inplace=True)
+        return X_out
 
 class CarAgeImputer(BaseEstimator, TransformerMixin):
     """Impute car age based on car ownership status"""
@@ -112,7 +225,7 @@ class OccupationImputer(BaseEstimator, TransformerMixin):
         
         occ = X['OCCUPATION_TYPE'].copy()
         missing_mask = occ.isna() | (occ == '')
-        no_employment_duration = X['DAYS_EMPLOYED'].isna() | (X['DAYS_EMPLOYED'] >= 0)
+        no_employment_duration = X['DAYS_EMPLOYED'].isna() | (X['DAYS_EMPLOYED'] <= 0)
         
         # Conditions indicating likely unemployment
         # checked no raise value in .str bcoz of object dtype
@@ -215,48 +328,36 @@ class AgeFeatureCreator(BaseEstimator, TransformerMixin):
     
     def transform(self, X):
         X = X.copy()
-        X['AGE'] = (-X['DAYS_BIRTH'] / 365.25).astype(int)
+        X['AGE'] = (X['DAYS_BIRTH'].abs() / 365.25).astype(int)
         X = X.drop(columns=['DAYS_BIRTH'])
         return X
 
-class YearEmployedFeatureCreator(BaseEstimator, TransformerMixin):
-    """Create YEAR_EMPLOYED feature from DAYS_EMPLOYED"""
-    
-    def __init__(self):
-        pass
-    
-    def fit(self, X, y=None):
-        return self
-    
-    def transform(self, X):
-        X = X.copy()
-        X['YEAR_EMPLOYED'] = (-X['DAYS_EMPLOYED'] / 365.25).astype(int)
-        X = X.drop(columns=['DAYS_EMPLOYED'])
-        return X
 
-class HourBinner(BaseEstimator, TransformerMixin):
+class DaysAbsConverter(BaseEstimator, TransformerMixin):
+    """
+    Convert negative DAYS_* columns to positive (absolute values).
+    """
+    
+    def __init__(self, prefix='DAYS_'):
+        self.prefix = prefix
+        self.days_cols_ = None
+    
     def fit(self, X, y=None):
+        # Identify all columns starting with the prefix
+        self.days_cols_ = [col for col in X.columns if col.startswith(self.prefix)]
         return self
     
     def transform(self, X):
-        X = X.copy()
+        X_out = X.copy()
         
-        def bin_hour(x):
-            if x < 6:
-                return "Late_Night"
-            elif x < 12:
-                return "Morning"
-            elif x < 18:
-                return "Afternoon"
-            else:
-                return "Evening"
+        # Convert negative values to positive
+        if self.days_cols_:
+            X_out[self.days_cols_] = X_out[self.days_cols_].abs()
         
-        X['HOUR_APPR_PROCESS_BIN'] = X['HOUR_APPR_PROCESS_START'].apply(bin_hour)
-        
-        return X
+        return X_out
 
 class CreditBureauProcessor(BaseEstimator, TransformerMixin):
-    """Process credit bureau columns"""
+    """Process credit bureau columns with ordinal encoding"""
     
     def __init__(self):
         self.credit_bureau_cols = [
@@ -267,11 +368,21 @@ class CreditBureauProcessor(BaseEstimator, TransformerMixin):
             'AMT_REQ_CREDIT_BUREAU_QRT',
             'AMT_REQ_CREDIT_BUREAU_YEAR'
         ]
+        
+        # Define the global ordering for consistency (Lowest Risk -> Highest Risk)
+        self.hour_day_order = ['ZERO', 'HAS_ENQUIRY'] 
+        self.week_order = ['ZERO', 'ONE', 'MULTIPLE']
+        self.mon_qrt_order = ['ZERO', 'LOW', 'HIGH']
+        self.year_order = ['ZERO', 'LOW', 'MEDIUM', 'HIGH']
+        
+        # Dictionary to store the fitted encoders
+        self.encoders = {}
+        # List to store names of categorical columns
+        self.cat_cols = []
     
     def fit(self, X, y=None):
-        return self
-    
-    def transform(self, X):
+        from sklearn.preprocessing import OrdinalEncoder
+        """Fit the ordinal encoders on the training data"""
         X = X.copy()
         
         # Create binary flag for missingness
@@ -280,12 +391,65 @@ class CreditBureauProcessor(BaseEstimator, TransformerMixin):
         # Fill 0 for all missing bureau counts
         X[self.credit_bureau_cols] = X[self.credit_bureau_cols].fillna(0)
         
-        # Encode categorical
+        # Create categorical columns
         X = self._encode_bureau_categorical(X)
+        
+        # Fit ordinal encoders on the categorical columns
+        self.cat_cols = [col for col in X.columns if col.endswith('_CAT')]
+        
+        for col in self.cat_cols:
+            categories = self._get_categories(col)
+            if categories:
+                encoder = OrdinalEncoder(
+                    categories=categories, 
+                    handle_unknown='use_encoded_value', 
+                    unknown_value=-1
+                )
+                encoder.fit(X[[col]])
+                self.encoders[col] = encoder
+            else:
+                print(f"Warning: Could not find category definition for {col}")
+        
+        return self
+    
+    def transform(self, X):
+        """Transform the data using fitted encoders"""
+        X = X.copy()
+        
+        # Create binary flag for missingness
+        X['HAS_CREDIT_BUREAU_DATA'] = (~X['AMT_REQ_CREDIT_BUREAU_HOUR'].isna()).astype(int)
+        
+        # Fill 0 for all missing bureau counts
+        X[self.credit_bureau_cols] = X[self.credit_bureau_cols].fillna(0)
+        
+        # Create categorical columns
+        X = self._encode_bureau_categorical(X)
+        
+        # Apply ordinal encoding and create _ORD columns
+        for col, encoder in self.encoders.items():
+            new_ord_col = col.replace('_CAT', '_ORD')
+            X[new_ord_col] = encoder.transform(X[[col]])
+            X[new_ord_col] = X[new_ord_col].astype(int)
+        
+        # Drop the temporary categorical columns
+        X = X.drop(columns=self.cat_cols)
         
         return X
     
+    def _get_categories(self, col):
+        """Helper to get the correct category order for a column"""
+        if 'HOUR' in col or 'DAY' in col:
+            return [self.hour_day_order]
+        elif 'WEEK' in col:
+            return [self.week_order]
+        elif 'MON' in col or 'QRT' in col:
+            return [self.mon_qrt_order]
+        elif 'YEAR' in col:
+            return [self.year_order]
+        return None
+    
     def _encode_bureau_categorical(self, df):
+        """Create categorical columns from numeric bureau counts"""
         for col in self.credit_bureau_cols:
             new_col = col + '_CAT'
             
@@ -313,7 +477,6 @@ class CreditBureauProcessor(BaseEstimator, TransformerMixin):
         
         return df
 
-
 class DocumentProcessor(BaseEstimator, TransformerMixin):
     """Process document flag columns"""
     
@@ -335,42 +498,60 @@ class DocumentProcessor(BaseEstimator, TransformerMixin):
         return X
 
 
+
 class SocialCircleProcessor(BaseEstimator, TransformerMixin):
-    """Process social circle columns with outlier capping"""
+    """Process social circle columns with outlier capping using Winsorization"""
     
-    def __init__(self):
-        self.cols_social = [
-            "OBS_30_CNT_SOCIAL_CIRCLE", "OBS_60_CNT_SOCIAL_CIRCLE",
-            "DEF_30_CNT_SOCIAL_CIRCLE", "DEF_60_CNT_SOCIAL_CIRCLE"
+    def __init__(self, percentile=0.9999, verbose=False):
+        """
+        Parameters:
+        -----------
+        percentile : float, default=0.9999
+            The percentile threshold for capping outliers (P99.99)
+        verbose : bool, default=False
+            If True, print value counts after capping
+        """
+        self.social_cols = [
+            'OBS_30_CNT_SOCIAL_CIRCLE', 
+            'DEF_30_CNT_SOCIAL_CIRCLE',
+            'OBS_60_CNT_SOCIAL_CIRCLE', 
+            'DEF_60_CNT_SOCIAL_CIRCLE'
         ]
+        self.percentile = percentile
+        self.verbose = verbose
+        self.upper_limits_ = {}
     
     def fit(self, X, y=None):
+        """
+        Fit the processor by calculating upper limits for each column from training data
+        """
+        for col in self.social_cols:
+            if col in X.columns:
+                # Calculate and store the upper limit from TRAINING data only
+                self.upper_limits_[col] = X[col].quantile(self.percentile)
+                if self.verbose:
+                    print(f"Upper limit for {col}: {self.upper_limits_[col]}")
+        
         return self
     
     def transform(self, X):
+        """
+        Transform the data by capping outliers using fitted upper limits
+        """
         X = X.copy()
         
-        # Cap outliers using IQR
-        for col in self.cols_social:
-            X[col + "_capped_iqr"] = self._cap_iqr(X[col])
-        
-        # Cap outliers using 99th percentile
-        for col in self.cols_social:
-            X[col + "_capped_p99"] = self._cap_percentile(X[col])
+        # Cap outliers using the pre-calculated upper limits from fit()
+        for col in self.social_cols:
+            if col in X.columns and col in self.upper_limits_:
+                X[col] = X[col].clip(upper=self.upper_limits_[col])
+                
+                # Print value counts if verbose is True
+                if self.verbose:
+                    value_counts = X[col].value_counts().sort_index()
+                    print(f"\nValue counts for {col} after capping:")
+                    print(value_counts)
         
         return X
-    
-    def _cap_iqr(self, series):
-        Q1 = series.quantile(0.25)
-        Q3 = series.quantile(0.75)
-        IQR = Q3 - Q1
-        upper = Q3 + 1.5 * IQR
-        lower = Q1 - 1.5 * IQR
-        return series.clip(lower, upper)
-    
-    def _cap_percentile(self, series, p=0.99):
-        upper = series.quantile(p)
-        return series.clip(upper=upper)
 
 
 class AmountOutlierProcessor(BaseEstimator, TransformerMixin):
@@ -383,7 +564,7 @@ class AmountOutlierProcessor(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         # Calculate 99.5th percentile thresholds
         for col in self.amount_cols:
-            self.caps_[col] = np.percentile(X[col], 99.5)
+            self.caps_[col] = np.percentile(X[col], 99.995)
         return self
     
     def transform(self, X):
@@ -412,6 +593,62 @@ class CategoricalConverter(BaseEstimator, TransformerMixin):
         for col in X.select_dtypes(include='object').columns:
             X[col] = X[col].astype('category')
         return X
+
+import numpy as np
+import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
+
+
+class LogTransformer(BaseEstimator, TransformerMixin):
+    """
+    Transform specified columns using log1p and optionally drop original columns.
+    
+    Parameters
+    ----------
+    columns : list of str
+        Column names to transform
+    suffix : str, default='_LOG'
+        Suffix to append to transformed column names
+    drop_original : bool, default=True
+        Whether to drop the original columns after transformation
+    """
+    
+    def __init__(self, columns, suffix='_LOG', drop_original=True):
+        self.columns = columns
+        self.suffix = suffix
+        self.drop_original = drop_original
+    
+    def fit(self, X, y=None):
+        """Fit the transformer (no-op for this transformer)."""
+        return self
+    
+    def transform(self, X):
+        """
+        Apply log1p transformation to specified columns.
+        
+        Parameters
+        ----------
+        X : pd.DataFrame
+            Input dataframe
+            
+        Returns
+        -------
+        pd.DataFrame
+            Transformed dataframe
+        """
+        X_transformed = X.copy()
+        
+        # Apply log1p transformation
+        for col in self.columns:
+            if col in X_transformed.columns:
+                X_transformed[f'{col}{self.suffix}'] = np.log1p(X_transformed[col])
+        
+        # Drop original columns if specified
+        if self.drop_original:
+            cols_to_drop = [col for col in self.columns if col in X_transformed.columns]
+            X_transformed = X_transformed.drop(columns=cols_to_drop)
+        
+        return X_transformed
 
 class StandardScalerTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, exclude_cols=None):
@@ -641,7 +878,7 @@ class FlexibleCategoricalEncoder(BaseEstimator, TransformerMixin):
 
 
 # Usage example:
-def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None):
+def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None, model_base = 'logistic'):
     """
     Create the full preprocessing pipeline
     
@@ -670,9 +907,14 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None):
         "DEF_30_CNT_SOCIAL_CIRCLE", "DEF_60_CNT_SOCIAL_CIRCLE"
     ]
     ext_cols = ["EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3"]
-    
+    log_transformer = LogTransformer(
+    columns=['AMT_CREDIT', 'AMT_INCOME_TOTAL'],
+    suffix='_LOG',
+    drop_original=True
+    )
     # Base pipeline steps
     steps = [
+        ('drop_unnecessary', DropcolumnsTransformer(columns = ['ID'])),
         ('basic_imputer', BasicImputerTransformer()),
         ('car_age_imputer', CarAgeImputer()),
         ('employment_imputer', EmploymentImputer()),
@@ -681,41 +923,31 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None):
         # ('ext_knn_imputer', ExtSourceKNNImputer(k=5, top_n=5)),
         ('ext_simple_imputer', SimpleImputerTransformer(columns=ext_cols, strategy='median')),
         ('social_simple_imputer', SimpleImputerTransformer(columns=cols_social, strategy='median')),
+        ('weekday', WeekdayEncoder()),
+        ('hour_bin', HourBinner()),
         ('age_creator', AgeFeatureCreator()),
-        ('year_employed_creator', YearEmployedFeatureCreator()),
+        ('days_abs_converter', DaysAbsConverter()),
         ('credit_bureau_processor', CreditBureauProcessor()),
         ('document_processor', DocumentProcessor()),
-        # ('social_outlier_processor', SocialCircleProcessor()),
-        # ('amount_outlier_processor', AmountOutlierProcessor()),
-        ('scaler', StandardScalerTransformer()),
-
+        ('social_outlier_processor', SocialCircleProcessor()),
+        ('amount_outlier_processor', AmountOutlierProcessor()),
+        ('log_transformer', log_transformer),
     ]
     
+    if model_base == 'logistic':
+        steps.append(('scaler', StandardScalerTransformer()))
+
     # Add encoding step based on type
-    if encoding_type == 'flexible':
-        if encoding_config is None:
-            raise ValueError("encoding_config must be provided when using 'flexible' encoding_type")
+    if encoding_config is None:
+        raise ValueError("encoding_config must be provided when using 'flexible' encoding_type")
+    else:
         steps.append(('flexible_encoder', FlexibleCategoricalEncoder(**encoding_config)))
-    
-    elif encoding_type == 'ordinal':
-        # Example ordinal mappings - customize based on your domain knowledge
-        ordinal_mappings = {
-            'NAME_EDUCATION_TYPE': [
-                'Lower secondary', 'Secondary / secondary special',
-                'Incomplete higher', 'Higher education'
-            ],
-            # Add more ordinal mappings as needed
-        }
-        steps.append(('ordinal_encoder', CustomOrdinalEncoder(ordinal_mappings=ordinal_mappings)))
-    
-    elif encoding_type == 'none':
-        # Just convert to category dtype
-        steps.append(('categorical_converter', CategoricalConverter()))
+    steps.append(('hour_bin_encoder', HourBinEncoder()))
     
     pipeline = Pipeline(steps)
     return pipeline
 
-def save_preprocessing_pipeline(pipeline, filepath: str):
+def save_preprocessing_pipeline(pipeline, model_base = 'logistic'):
     """
     Save preprocessing pipeline to disk
     
@@ -726,6 +958,7 @@ def save_preprocessing_pipeline(pipeline, filepath: str):
     filepath : str
         Path to save pipeline
     """
+    filepath = f'models/{model_base}_preprocessing_pipeline.pkl'
     Path(filepath).parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline, filepath)
     print(f"Preprocessing pipeline saved to {filepath}")
@@ -751,14 +984,7 @@ if __name__ == "__main__":
             'NAME_INCOME_TYPE',      # Low cardinality: ~8 types
             'NAME_FAMILY_STATUS',    # Low cardinality: ~6 types
             'NAME_HOUSING_TYPE', # 7 type
-            'NAME_TYPE_SUITE',
-            'WEEKDAY_APPR_PROCESS_START',
-            'AMT_REQ_CREDIT_BUREAU_HOUR_CAT', 
-            'AMT_REQ_CREDIT_BUREAU_DAY_CAT',      
-            'AMT_REQ_CREDIT_BUREAU_WEEK_CAT', 
-            'AMT_REQ_CREDIT_BUREAU_MON_CAT',      
-            'AMT_REQ_CREDIT_BUREAU_QRT_CAT', 
-            'AMT_REQ_CREDIT_BUREAU_YEAR_CAT'    
+            'NAME_TYPE_SUITE', 
         ],
         'ordinal_encode_cols': [
             'NAME_EDUCATION_TYPE'    # Has natural ordering
@@ -778,18 +1004,15 @@ if __name__ == "__main__":
         ]
     }
     
-    pipeline = create_preprocessing_pipeline(
-        encoding_type='flexible',
-        encoding_config=encoding_config
+    pipeline_logistic = create_preprocessing_pipeline(
+        encoding_config=encoding_config,
+        model_base = 'logistic'
     )
 
-    save_preprocessing_pipeline(pipeline, 'models/preprocessing_pipeline.pkl')
-    # ========== EXAMPLE 3: Mix encoders in custom pipeline ==========
-    # from sklearn.pipeline import Pipeline
-    # custom_pipeline = Pipeline([
-    #     ('preprocessor', create_preprocessing_pipeline(encoding_type='none')),
-    #     ('label_encoder', CustomLabelEncoder(columns=['CODE_GENDER', 'FLAG_OWN_CAR'])),
-    #     ('onehot_encoder', CustomOneHotEncoder(columns=['NAME_CONTRACT_TYPE', 'NAME_INCOME_TYPE'])),
-    # ])
-    
+    save_preprocessing_pipeline(pipeline_logistic, model_base = 'logistic')
+
+    pipeline_tree = create_preprocessing_pipeline(encoding_config= encoding_config, 
+                                                  model_base = 'tree')
+    save_preprocessing_pipeline(pipeline_tree, model_base = 'tree')
+   
     

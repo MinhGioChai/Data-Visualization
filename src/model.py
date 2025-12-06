@@ -135,24 +135,7 @@ class MLModelTrainer:
                 self.categorical_indices = []
                 logger.info("Using preprocessed data - all features are numeric")
         
-        # Apply scaling for Logistic Regression with preprocessed data
-        # if self.model_type == 'logistic_regression' and self.data_type == 'preprocessed':
-        #     if is_train:
-        #         self.scaler = StandardScaler()
-        #         X = pd.DataFrame(
-        #             self.scaler.fit_transform(X),
-        #             columns=X.columns,
-        #             index=X.index
-        #         )
-        #         logger.info("Fitted StandardScaler for Logistic Regression")
-        #     else:
-        #         if self.scaler is not None:
-        #             X = pd.DataFrame(
-        #                 self.scaler.transform(X),
-        #                 columns=X.columns,
-        #                 index=X.index
-        #             )
-        #             logger.info("Applied StandardScaler for Logistic Regression")
+
         
         return X
     
@@ -560,11 +543,6 @@ def load_preprocessing_pipeline(filepath: str):
     logger.info(f"Preprocessing pipeline loaded from {filepath}")
     return pipeline
 
-
-# =============================================================================
-# EXPERIMENT RUNNER - Test Multiple Models on Different Data Types
-# =============================================================================
-
 # =============================================================================
 # EXPERIMENT RUNNER - Test Multiple Models on Different Data Types
 # =============================================================================
@@ -577,7 +555,6 @@ def run_experiments(
     use_smote: bool = True,
     test_size: float = 0.2,
     random_state: int = 42,
-    pipeline_path: str = "models/preprocessing_pipeline.pkl"
 ):
     """
     Run experiments with multiple models and data types
@@ -613,6 +590,11 @@ def run_experiments(
         data_types = ['preprocessed']  # Default to preprocessed
     
     # Load preprocessing pipeline if needed
+    if 'preprocessed' in data_types:
+        if ('xgboost' in models) or ('random_forest' in models):
+            pipeline_path = r'models\tree_preprocessing_pipeline.pkl'
+        else:
+            pipeline_path = r'models/logistic_preprocessing_pipeline.pkl'
     preprocessing_pipeline = None
     if 'preprocessed' in data_types:
         try:
@@ -982,7 +964,7 @@ def xgboost_example_with_raw_data():
     
     return results
 
-def example_with_preprocessed_data(pipeline_path: str = 'models/preprocessing_pipeline.pkl'):
+def example_with_preprocessed_data():
     """
     Example: Train models on PREPROCESSED data
     Loads the preprocessing pipeline from disk automatically
@@ -1005,79 +987,10 @@ def example_with_preprocessed_data(pipeline_path: str = 'models/preprocessing_pi
         models=['xgboost', 'random_forest', 'logistic_regression'],
         data_types=['preprocessed'],
         use_smote=True,
-        pipeline_path=pipeline_path
     )
     
     return results
 
-
-
-def example_single_model_preprocessed(pipeline_path: str = 'models/preprocessing_pipeline.pkl'):
-    """
-    Example: Train a single model on preprocessed data
-    Loads preprocessing pipeline from disk
-    
-    Parameters:
-    -----------
-    pipeline_path : str
-        Path to saved preprocessing pipeline
-    """
-    # Load raw data
-    df = pd.read_csv('raw_data/train.csv')
-    
-    X = df.drop('TARGET', axis=1)
-    y = df['TARGET']
-    
-    # Load preprocessing pipeline
-    preprocessing_pipeline = load_preprocessing_pipeline(pipeline_path)
-    
-    # Initialize trainer
-    trainer = MLModelTrainer(
-        model_type='logistic_regression',
-        use_smote=True,
-        data_type='preprocessed'
-    )
-    
-    # STEP 1: Split data FIRST
-    X_train, X_test, y_train, y_test = trainer.split_data(X, y)
-    
-    # STEP 2: Apply preprocessing separately to train and test
-    logger.info("Preprocessing training data...")
-    X_train_prep = preprocessing_pipeline.fit_transform(X_train)
-    
-    # Handle row dropping if your pipeline has it
-    if 'drop_rows' in preprocessing_pipeline.named_steps:
-        row_dropper = preprocessing_pipeline.named_steps['drop_rows']
-        y_train = row_dropper.align_y(y_train)
-    
-    logger.info("Preprocessing test data...")
-    X_test_prep = preprocessing_pipeline.transform(X_test)
-    
-    # Convert to DataFrame if needed
-    if isinstance(X_train_prep, np.ndarray):
-        X_train_prep = pd.DataFrame(X_train_prep, columns=[f'f_{i}' for i in range(X_train_prep.shape[1])])
-        X_test_prep = pd.DataFrame(X_test_prep, columns=[f'f_{i}' for i in range(X_test_prep.shape[1])])
-    
-    # STEP 3: Prepare data (handles scaling for logistic regression)
-    X_train_prep = trainer.prepare_data(X_train_prep, y_train, is_train=True)
-    X_test_prep = trainer.prepare_data(X_test_prep, y_test, is_train=False)
-    
-    # STEP 4: Apply SMOTE
-    X_train_smote, y_train_smote = trainer.apply_smote(X_train_prep, y_train)
-    
-    # STEP 5: Train
-    trainer.train(X_train_smote, y_train_smote)
-    
-    # STEP 6: Evaluate
-    train_metrics, test_metrics = trainer.print_evaluation(
-        X_train_prep, y_train,
-        X_test_prep, y_test
-    )
-    
-    # STEP 7: Save model with pipeline
-    trainer.save_model('models/my_preprocessed_model.pkl', preprocessing_pipeline=preprocessing_pipeline)
-    
-    return trainer
 
 
 def example_load_and_predict(
@@ -1152,33 +1065,27 @@ if __name__ == "__main__":
     print("Training on RAW data not drop na.")
     results_raw_no_dropna = xgboost_example_with_raw_data()
     
-    print('\nCompleted examples.')
-    # Check if preprocessing pipeline exists
-    import os
-    pipeline_path = 'models/preprocessing_pipeline.pkl'
-    
-    if os.path.exists(pipeline_path):
-        print(f"\n✅ Found preprocessing pipeline at: {pipeline_path}")
+    print('\nCompleted RAW examples.')   
+  
+    # EXAMPLE 1: Train all models on preprocessed data
+    print("\n" + "="*80)
+    print("Training models on PREPROCESSED data...")
+    print("="*80)
+    results_preprocessed = example_with_preprocessed_data()
         
-        # EXAMPLE 1: Train all models on preprocessed data
-        print("\n" + "="*80)
-        print("Training models on PREPROCESSED data...")
-        print("="*80)
-        results_preprocessed = example_with_preprocessed_data(pipeline_path)
-        
-        # Print summary
-        print("\n" + "="*80)
-        print("RESULTS SUMMARY")
-        print("="*80)
-        for key, result in results_preprocessed.items():
-            if 'error' in result:
-                print(f"❌ {key}: FAILED - {result['error']}")
-            else:
-                test_metrics = result['test_metrics']
-                print(f"✅ {key}:")
-                print(f"   - Test Accuracy: {test_metrics['accuracy']:.4f}")
-                print(f"   - Test ROC-AUC:  {test_metrics['roc_auc']:.4f}")
-                print(f"   - Model saved:   {result['model_path']}")
+    # Print summary
+    print("\n" + "="*80)
+    print("RESULTS SUMMARY")
+    print("="*80)
+    for key, result in results_preprocessed.items():
+        if 'error' in result:
+            print(f"❌ {key}: FAILED - {result['error']}")
+        else:
+            test_metrics = result['test_metrics']
+            print(f"✅ {key}:")
+            print(f"   - Test Accuracy: {test_metrics['accuracy']:.4f}")
+            print(f"   - Test ROC-AUC:  {test_metrics['roc_auc']:.4f}")
+            print(f"   - Model saved:   {result['model_path']}")
         
         # EXAMPLE 2: Make predictions with saved model
         """
@@ -1191,8 +1098,5 @@ if __name__ == "__main__":
         )
         print(predictions.head())
         """
-        
-    else:
-        print(f"\n⚠️  Preprocessing pipeline not found at: {pipeline_path}")
-        print("="*80)
+    
     
