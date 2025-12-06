@@ -413,311 +413,72 @@ class CategoricalConverter(BaseEstimator, TransformerMixin):
             X[col] = X[col].astype('category')
         return X
 
-
-class CustomLabelEncoder(BaseEstimator, TransformerMixin):
-    """Label encode specified categorical columns"""
-    
-    def __init__(self, columns=None):
+class StandardScalerTransformer(BaseEstimator, TransformerMixin):
+    def __init__(self, exclude_cols=None):
         """
+        Initialize the StandardScaler transformer.
+        
         Parameters:
         -----------
-        columns : list of str, optional
-            List of column names to label encode. If None, will encode all categorical columns.
+        exclude_cols : list, optional
+            List of column names to exclude from scaling
         """
-        self.columns = columns
-        self.label_encoders_ = {}
-        self.columns_to_encode_ = None
-    
+        self.exclude_cols = exclude_cols if exclude_cols is not None else []
+        # Always exclude 'TARGET' column
+        if 'TARGET' not in self.exclude_cols:
+            self.exclude_cols.append('TARGET')
+        self.scaler = None
+        self.numeric_cols = None
+        
     def fit(self, X, y=None):
-        from sklearn.preprocessing import LabelEncoder
+        """
+        Fit the StandardScaler on numeric columns.
         
-        X = X.copy()
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Input features
+        y : pd.Series, optional
+            Target variable (not used)
+            
+        Returns:
+        --------
+        self
+        """
+        # Identify numeric columns
+        self.numeric_cols = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
         
-        # Determine which columns to encode
-        if self.columns is None:
-            self.columns_to_encode_ = X.select_dtypes(include=['object', 'category']).columns.tolist()
-        else:
-            self.columns_to_encode_ = self.columns
+        # Remove excluded columns
+        self.numeric_cols = [col for col in self.numeric_cols if col not in self.exclude_cols]
         
-        # Fit a label encoder for each column
-        for col in self.columns_to_encode_:
-            if col in X.columns:
-                le = LabelEncoder()
-                # Handle missing values by converting to string
-                X[col] = X[col].astype(str)
-                le.fit(X[col])
-                self.label_encoders_[col] = le
+        # Fit the scaler
+        if len(self.numeric_cols) > 0:
+            self.scaler = StandardScaler()
+            self.scaler.fit(X[self.numeric_cols])
         
         return self
     
     def transform(self, X):
-        X = X.copy()
-        
-        for col in self.columns_to_encode_:
-            if col in X.columns and col in self.label_encoders_:
-                le = self.label_encoders_[col]
-                X[col] = X[col].astype(str)
-                
-                # Handle unseen categories
-                X[col] = X[col].apply(lambda x: x if x in le.classes_ else le.classes_[0])
-                X[col] = le.transform(X[col])
-        
-        return X
-
-
-class CustomOrdinalEncoder(BaseEstimator, TransformerMixin):
-    """Ordinal encode specified categorical columns with custom ordering"""
-    
-    def __init__(self, ordinal_mappings=None):
         """
+        Transform the data by scaling numeric columns.
+        
         Parameters:
         -----------
-        ordinal_mappings : dict, optional
-            Dictionary mapping column names to ordered lists of categories.
-            Example: {'education': ['Primary', 'Secondary', 'Higher']}
-            If None, will use alphabetical ordering.
-        """
-        self.ordinal_mappings = ordinal_mappings or {}
-        self.encoders_ = {}
-        self.columns_to_encode_ = None
-    
-    def fit(self, X, y=None):
-        from sklearn.preprocessing import OrdinalEncoder
-        
-        X = X.copy()
-        self.columns_to_encode_ = list(self.ordinal_mappings.keys())
-        
-        for col in self.columns_to_encode_:
-            if col in X.columns:
-                # Create ordinal encoder with specified categories
-                categories = [self.ordinal_mappings[col]]
-                oe = OrdinalEncoder(categories=categories, handle_unknown='use_encoded_value', unknown_value=-1)
-                oe.fit(X[[col]])
-                self.encoders_[col] = oe
-        
-        return self
-    
-    def transform(self, X):
-        X = X.copy()
-        
-        for col in self.columns_to_encode_:
-            if col in X.columns and col in self.encoders_:
-                oe = self.encoders_[col]
-                X[col] = oe.transform(X[[col]])
-        
-        return X
-
-
-class CustomOneHotEncoder(BaseEstimator, TransformerMixin):
-    """One-hot encode specified categorical columns"""
-    
-    def __init__(self, columns=None, drop='first', max_categories=None, handle_unknown='ignore'):
-        """
-        Parameters:
-        -----------
-        columns : list of str, optional
-            List of column names to one-hot encode. If None, will encode all categorical columns.
-        drop : {'first', 'if_binary', None}, default='first'
-            Whether to drop one of the categories per feature.
-        max_categories : int, optional
-            Maximum number of categories per column. Columns exceeding this will be skipped.
-        handle_unknown : {'error', 'ignore'}, default='ignore'
-            How to handle unknown categories during transform.
-        """
-        self.columns = columns
-        self.drop = drop
-        self.max_categories = max_categories
-        self.handle_unknown = handle_unknown
-        self.one_hot_encoder_ = None
-        self.columns_to_encode_ = None
-        self.feature_names_out_ = None
-        self.columns_to_keep_ = None
-    
-    def fit(self, X, y=None):
-        from sklearn.preprocessing import OneHotEncoder
-        
-        X = X.copy()
-        
-        # Determine which columns to encode
-        if self.columns is None:
-            categorical_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
-        else:
-            categorical_cols = self.columns
-        
-        # Filter by max_categories if specified
-        self.columns_to_encode_ = []
-        for col in categorical_cols:
-            if col in X.columns:
-                n_categories = X[col].nunique()
-                if self.max_categories is None or n_categories <= self.max_categories:
-                    self.columns_to_encode_.append(col)
-                else:
-                    print(f"Skipping {col}: {n_categories} categories exceeds max_categories={self.max_categories}")
-        
-        # Store columns that won't be encoded
-        self.columns_to_keep_ = [col for col in X.columns if col not in self.columns_to_encode_]
-        
-        if len(self.columns_to_encode_) > 0:
-            # Fit one-hot encoder
-            self.one_hot_encoder_ = OneHotEncoder(
-                drop=self.drop,
-                sparse_output=False,
-                handle_unknown=self.handle_unknown
-            )
-            self.one_hot_encoder_.fit(X[self.columns_to_encode_])
+        X : pd.DataFrame
+            Input features
             
-            # Get feature names
-            self.feature_names_out_ = self.one_hot_encoder_.get_feature_names_out(self.columns_to_encode_)
-        
-        return self
-    
-    def transform(self, X):
-        X = X.copy()
-        
-        if len(self.columns_to_encode_) > 0 and self.one_hot_encoder_ is not None:
-            # Transform categorical columns
-            encoded_array = self.one_hot_encoder_.transform(X[self.columns_to_encode_])
-            encoded_df = pd.DataFrame(
-                encoded_array,
-                columns=self.feature_names_out_,
-                index=X.index
-            )
-            
-            # Combine with non-encoded columns
-            X_non_encoded = X[self.columns_to_keep_]
-            X_transformed = pd.concat([X_non_encoded, encoded_df], axis=1)
-            
-            return X_transformed
-        else:
-            return X
-
-
-class SmartCategoricalEncoder(BaseEstimator, TransformerMixin):
-    """
-    Intelligently encode categorical variables based on cardinality:
-    - Binary columns: Label encode
-    - Low cardinality (<=10): One-hot encode
-    - High cardinality (>10): Target/Frequency encode or keep as-is
-    """
-    
-    def __init__(self, low_cardinality_threshold=10, encoding_strategy='auto'):
+        Returns:
+        --------
+        pd.DataFrame
+            Transformed features with scaled numeric columns
         """
-        Parameters:
-        -----------
-        low_cardinality_threshold : int, default=10
-            Threshold for determining low vs high cardinality
-        encoding_strategy : {'auto', 'frequency', 'target'}, default='auto'
-            Strategy for high cardinality features
-        """
-        self.low_cardinality_threshold = low_cardinality_threshold
-        self.encoding_strategy = encoding_strategy
-        self.binary_cols_ = []
-        self.low_card_cols_ = []
-        self.high_card_cols_ = []
-        self.label_encoders_ = {}
-        self.one_hot_encoder_ = None
-        self.frequency_maps_ = {}
-        self.columns_to_keep_ = None
-        self.feature_names_out_ = None
-    
-    def fit(self, X, y=None):
-        from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+        X_copy = X.copy()
         
-        X = X.copy()
-        categorical_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+        # Scale numeric columns
+        if len(self.numeric_cols) > 0 and self.scaler is not None:
+            X_copy[self.numeric_cols] = self.scaler.transform(X_copy[self.numeric_cols])
         
-        # Categorize columns by cardinality
-        for col in categorical_cols:
-            n_unique = X[col].nunique()
-            
-            if n_unique == 2:
-                self.binary_cols_.append(col)
-            elif n_unique <= self.low_cardinality_threshold:
-                self.low_card_cols_.append(col)
-            else:
-                self.high_card_cols_.append(col)
-        
-        print(f"Binary columns ({len(self.binary_cols_)}): {self.binary_cols_}")
-        print(f"Low cardinality columns ({len(self.low_card_cols_)}): {self.low_card_cols_}")
-        print(f"High cardinality columns ({len(self.high_card_cols_)}): {self.high_card_cols_}")
-        
-        # Fit label encoders for binary columns
-        for col in self.binary_cols_:
-            le = LabelEncoder()
-            X[col] = X[col].astype(str)
-            le.fit(X[col])
-            self.label_encoders_[col] = le
-        
-        # Fit one-hot encoder for low cardinality columns
-        if len(self.low_card_cols_) > 0:
-            self.one_hot_encoder_ = OneHotEncoder(
-                drop='first',
-                sparse_output=False,
-                handle_unknown='ignore'
-            )
-            self.one_hot_encoder_.fit(X[self.low_card_cols_])
-            self.feature_names_out_ = self.one_hot_encoder_.get_feature_names_out(self.low_card_cols_)
-        
-        # Fit frequency encoding for high cardinality columns
-        for col in self.high_card_cols_:
-            freq_map = X[col].value_counts(normalize=True).to_dict()
-            self.frequency_maps_[col] = freq_map
-        
-        # Store columns to keep as-is
-        non_categorical = [col for col in X.columns if col not in categorical_cols]
-        self.columns_to_keep_ = non_categorical
-        
-        return self
-    
-    def transform(self, X):
-        X = X.copy()
-        
-        # Label encode binary columns
-        for col in self.binary_cols_:
-            if col in X.columns:
-                le = self.label_encoders_[col]
-                X[col] = X[col].astype(str)
-                X[col] = X[col].apply(lambda x: x if x in le.classes_ else le.classes_[0])
-                X[col] = le.transform(X[col])
-        
-        # One-hot encode low cardinality columns
-        encoded_dfs = []
-        if len(self.low_card_cols_) > 0 and self.one_hot_encoder_ is not None:
-            encoded_array = self.one_hot_encoder_.transform(X[self.low_card_cols_])
-            encoded_df = pd.DataFrame(
-                encoded_array,
-                columns=self.feature_names_out_,
-                index=X.index
-            )
-            encoded_dfs.append(encoded_df)
-        
-        # Frequency encode high cardinality columns
-        for col in self.high_card_cols_:
-            if col in X.columns:
-                freq_map = self.frequency_maps_[col]
-                X[col + '_freq'] = X[col].map(freq_map).fillna(0)
-        
-        # Combine all features
-        result_dfs = [X[self.columns_to_keep_]]
-        
-        # Add binary encoded columns
-        for col in self.binary_cols_:
-            if col in X.columns:
-                result_dfs.append(X[[col]])
-        
-        # Add one-hot encoded columns
-        if encoded_dfs:
-            result_dfs.extend(encoded_dfs)
-        
-        # Add frequency encoded columns
-        for col in self.high_card_cols_:
-            if col + '_freq' in X.columns:
-                result_dfs.append(X[[col + '_freq']])
-        
-        X_transformed = pd.concat(result_dfs, axis=1)
-        
-        return X_transformed
-
+        return X_copy
 
 class FlexibleCategoricalEncoder(BaseEstimator, TransformerMixin):
     """
@@ -926,24 +687,15 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None):
         ('document_processor', DocumentProcessor()),
         # ('social_outlier_processor', SocialCircleProcessor()),
         # ('amount_outlier_processor', AmountOutlierProcessor()),
+        ('scaler', StandardScalerTransformer()),
+
     ]
     
     # Add encoding step based on type
-    if encoding_type == 'smart':
-        steps.append(('smart_encoder', SmartCategoricalEncoder(low_cardinality_threshold=10)))
-    
-    elif encoding_type == 'flexible':
+    if encoding_type == 'flexible':
         if encoding_config is None:
             raise ValueError("encoding_config must be provided when using 'flexible' encoding_type")
         steps.append(('flexible_encoder', FlexibleCategoricalEncoder(**encoding_config)))
-    
-    elif encoding_type == 'onehot':
-        # One-hot encode all categorical columns with max 15 categories
-        steps.append(('onehot_encoder', CustomOneHotEncoder(max_categories=15, drop='first')))
-    
-    elif encoding_type == 'label':
-        # Label encode all categorical columns
-        steps.append(('label_encoder', CustomLabelEncoder()))
     
     elif encoding_type == 'ordinal':
         # Example ordinal mappings - customize based on your domain knowledge
