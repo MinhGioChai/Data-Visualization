@@ -883,18 +883,18 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
     - Random Forest/XGBoost: variance threshold for binary features only
     """
     
-    def __init__(self, model_type='logistic', vif_threshold=10, variance_threshold=0.01):
+    def __init__(self, model_base='logistic', vif_threshold=10, variance_threshold=0.01):
         """
         Parameters:
         -----------
-        model_type : {'logistic', 'random_forest', 'xgboost'}, default='logistic'
+        model_base : {'logistic', 'random_forest', 'xgboost'}, default='logistic'
             Type of model to optimize feature selection for
         vif_threshold : float, default=10
             VIF threshold for multicollinearity removal (only for logistic regression)
         variance_threshold : float, default=0.01
             Variance threshold for binary feature removal
         """
-        self.model_type = model_type
+        self.model_base = model_base
         self.vif_threshold = vif_threshold
         self.variance_threshold = variance_threshold
         
@@ -905,6 +905,7 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
         self.variance_selector_ = None
     
     def _calculate_vif(self, X):
+        from statsmodels.stats.outliers_influence import variance_inflation_factor
         """Calculate VIF for all features and remove high VIF features iteratively"""
         X_vif = X.copy()
         removed_features = []
@@ -1029,11 +1030,11 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
         X = X.copy()
         
         print(f"\n{'#'*60}")
-        print(f"FEATURE SELECTION - Model Type: {self.model_type.upper()}")
+        print(f"FEATURE SELECTION - Model Type: {self.model_base.upper()}")
         print(f"Initial features: {X.shape[1]}")
         print(f"{'#'*60}")
         
-        if self.model_type.lower() == 'logistic':
+        if self.model_base.lower() == 'logistic':
             # Step 1: VIF filtering for Logistic Regression
             print(f"\nStep 1: VIF Filtering (threshold = {self.vif_threshold})")
             selected_features, self.removed_vif_features_ = self._calculate_vif(X)
@@ -1043,13 +1044,13 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
             print(f"\nStep 2: Variance Threshold for Binary Features")
             self.selected_features_, self.removed_variance_features_ = self._apply_variance_threshold(X_selected)
             
-        elif self.model_type.lower() in ['random_forest', 'xgboost']:
+        elif self.model_base.lower() == 'tree':
             # Only variance threshold for tree-based models
             print(f"\nApplying Variance Threshold for Binary Features")
             self.selected_features_, self.removed_variance_features_ = self._apply_variance_threshold(X)
             
         else:
-            raise ValueError(f"Unknown model_type: {self.model_type}. "
+            raise ValueError(f"Unknown model_base: {self.model_base}. "
                            f"Choose from: 'logistic', 'random_forest', 'xgboost'")
         
         print(f"\n{'#'*60}")
@@ -1099,7 +1100,7 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
 
 # Usage example:
 def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None, 
-                                 model_type='logistic', apply_feature_selection=True,
+                                 model_base='logistic', apply_feature_selection=True,
                                  vif_threshold=10, variance_threshold=0.01):
     """
     Create the full preprocessing pipeline
@@ -1156,7 +1157,7 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None,
         ('log_transformer', log_transformer),
     ]
     
-    if model_type == 'logistic':
+    if model_base == 'logistic':
         steps.append(('scaler', StandardScalerTransformer()))
 
     # Add encoding step based on type
@@ -1169,7 +1170,7 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None,
     # Add feature selection step
     if apply_feature_selection:
         steps.append(('feature_selector', FeatureSelector(
-            model_type=model_type,
+            model_base=model_base,
             vif_threshold=vif_threshold,
             variance_threshold=variance_threshold
         )))
@@ -1177,8 +1178,8 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None,
     pipeline = Pipeline(steps)
     return pipeline
 
-def save_preprocessing_pipeline(pipeline, model_type = 'logistic'):
-    # feature selection dung model_type nen doi het ve model_type
+def save_preprocessing_pipeline(pipeline, model_base = 'logistic'):
+    # feature selection dung model_base nen doi het ve model_base
     """
     Save preprocessing pipeline to disk
     
@@ -1189,7 +1190,7 @@ def save_preprocessing_pipeline(pipeline, model_type = 'logistic'):
     filepath : str
         Path to save pipeline
     """
-    filepath = f'models/{model_type}_preprocessing_pipeline_v2.pkl'
+    filepath = f'models/{model_base}_preprocessing_pipeline_v2.pkl'
     Path(filepath).parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline, filepath)
     print(f"Preprocessing pipeline saved to {filepath}")
@@ -1237,13 +1238,13 @@ if __name__ == "__main__":
     
     pipeline_logistic = create_preprocessing_pipeline(
         encoding_config=encoding_config,
-        model_type = 'logistic'
+        model_base = 'logistic'
     )
 
-    save_preprocessing_pipeline(pipeline_logistic, model_type = 'logistic')
+    save_preprocessing_pipeline(pipeline_logistic, model_base = 'logistic')
 
     pipeline_tree = create_preprocessing_pipeline(encoding_config= encoding_config, 
-                                                  model_type = 'tree')
-    save_preprocessing_pipeline(pipeline_tree, model_type = 'tree')
+                                                  model_base = 'tree')
+    save_preprocessing_pipeline(pipeline_tree, model_base = 'tree')
    
     
