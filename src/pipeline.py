@@ -315,7 +315,52 @@ class SimpleImputerTransformer(BaseEstimator, TransformerMixin):
         imputed_arr = self.imputer_.transform(X[self.columns])
         X[self.columns] = imputed_arr
         return X
+from sklearn.base import BaseEstimator, TransformerMixin
+import pandas as pd
 
+class ExtMeanTransformer(BaseEstimator, TransformerMixin):
+    """
+    Create mean of EXT_SOURCE_1, EXT_SOURCE_2, EXT_SOURCE_3 columns
+    and drop the original columns.
+    """
+    
+    def __init__(self, columns=None):
+        """
+        Parameters:
+        -----------
+        columns : list, optional
+            List of EXT_SOURCE column names. 
+            Default is ['EXT_SOURCE_1', 'EXT_SOURCE_2', 'EXT_SOURCE_3']
+        """
+        self.columns = columns or ['EXT_SOURCE_1', 'EXT_SOURCE_2', 'EXT_SOURCE_3']
+    
+    def fit(self, X, y=None):
+        """Fit method (does nothing, just returns self for pipeline compatibility)"""
+        return self
+    
+    def transform(self, X):
+        """
+        Create ext_mean column and drop original EXT_SOURCE columns
+        
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Input dataframe
+            
+        Returns:
+        --------
+        pd.DataFrame
+            Transformed dataframe with ext_mean column and original columns removed
+        """
+        X = X.copy()
+        
+        # Calculate mean of EXT_SOURCE columns (ignoring NaN values)
+        X['ext_mean'] = X[self.columns].mean(axis=1)
+        
+        # Drop original columns
+        X = X.drop(columns=self.columns)
+        
+        return X
 # update 2811: create age and year employed features, drop days_birth and days_employed
 class AgeFeatureCreator(BaseEstimator, TransformerMixin):
     """Create AGE feature from DAYS_BIRTH"""
@@ -876,9 +921,232 @@ class FlexibleCategoricalEncoder(BaseEstimator, TransformerMixin):
         
         return X_transformed
 
+class FeatureSelector(BaseEstimator, TransformerMixin):
+    """
+    Feature selection based on model type:
+    - Logistic Regression: VIF filtering + variance threshold for binary features
+    - Random Forest/XGBoost: variance threshold for binary features only
+    """
+    
+    def __init__(self, model_base='logistic', vif_threshold=10, variance_threshold=0.01):
+        """
+        Parameters:
+        -----------
+        model_base : {'logistic', 'random_forest', 'xgboost'}, default='logistic'
+            Type of model to optimize feature selection for
+        vif_threshold : float, default=10
+            VIF threshold for multicollinearity removal (only for logistic regression)
+        variance_threshold : float, default=0.01
+            Variance threshold for binary feature removal
+        """
+        self.model_base = model_base
+        self.vif_threshold = vif_threshold
+        self.variance_threshold = variance_threshold
+        
+        # Fitted attributes
+        self.selected_features_ = None
+        self.removed_vif_features_ = []
+        self.removed_variance_features_ = []
+        self.variance_selector_ = None
+    
+    def _calculate_vif(self, X):
+        from statsmodels.stats.outliers_influence import variance_inflation_factor
+        """Calculate VIF for all features and remove high VIF features iteratively"""
+        X_vif = X.copy()
+        removed_features = []
+        
+        print(f"\n{'='*60}")
+        print(f"Starting VIF calculation with {X_vif.shape[1]} features")
+        print(f"{'='*60}")
+        
+        iteration = 0
+        while True:
+            iteration += 1
+            print(f"\nIteration {iteration}:")
+            
+            # Calculate VIF for all features
+            vif_data = pd.DataFrame()
+            vif_data["Feature"] = X_vif.columns
+            
+            # Calculate VIF for each feature
+            vif_values = []
+            for i in range(len(X_vif.columns)):
+                try:
+                    vif = variance_inflation_factor(X_vif.values, i)
+                    vif_values.append(vif)
+                except:
+                    # If calculation fails, assign inf
+                    vif_values.append(np.inf)
+            
+            vif_data["VIF"] = vif_values
+            vif_data = vif_data.sort_values('VIF', ascending=False)
+            
+            # Show top 10 highest VIF
+            print(f"\nTop 10 highest VIF features:")
+            print(vif_data.head(10).to_string(index=False))
+            
+            # Find feature with highest VIF
+            max_vif = vif_data['VIF'].max()
+            
+            if max_vif > self.vif_threshold:
+                feature_to_remove = vif_data.iloc[0]['Feature']
+                print(f"\n⚠️  Removing '{feature_to_remove}' (VIF = {max_vif:.2f})")
+                
+                X_vif = X_vif.drop(columns=[feature_to_remove])
+                removed_features.append(feature_to_remove)
+            else:
+                print(f"\n✓ All VIF values <= {self.vif_threshold}")
+                print(f"✓ Remaining features: {X_vif.shape[1]}")
+                break
+        
+        print(f"\n{'='*60}")
+        print(f"VIF filtering completed:")
+        print(f"  - Removed {len(removed_features)} features")
+        print(f"  - Remaining {X_vif.shape[1]} features")
+        print(f"{'='*60}")
+        
+        if removed_features:
+            print(f"\nRemoved features: {removed_features}")
+        
+        return X_vif.columns.tolist(), removed_features
+    
+    def _apply_variance_threshold(self, X):
+        from sklearn.feature_selection import VarianceThreshold
+        """Apply variance threshold only to binary features"""
+        binary_cols = [col for col in X.columns if X[col].nunique() == 2]
+        non_binary_cols = [col for col in X.columns if col not in binary_cols]
+        
+        print(f"\n{'='*60}")
+        print(f"Variance Threshold Filtering (Binary Features Only)")
+        print(f"{'='*60}")
+        print(f"Total features: {X.shape[1]}")
+        print(f"Binary features: {len(binary_cols)}")
+        print(f"Non-binary features: {len(non_binary_cols)}")
+        
+        removed_features = []
+        
+        if len(binary_cols) > 0:
+            # Create variance selector for binary features only
+            self.variance_selector_ = VarianceThreshold(threshold=self.variance_threshold)
+            
+            # Fit and transform binary features
+            X_binary = X[binary_cols]
+            self.variance_selector_.fit(X_binary)
+            
+            # Get selected binary features
+            selected_binary_mask = self.variance_selector_.get_support()
+            selected_binary_cols = [col for col, selected in zip(binary_cols, selected_binary_mask) if selected]
+            removed_features = [col for col, selected in zip(binary_cols, selected_binary_mask) if not selected]
+            
+            print(f"\nBinary features analysis:")
+            print(f"  - Kept: {len(selected_binary_cols)}")
+            print(f"  - Removed (low variance): {len(removed_features)}")
+            
+            if removed_features:
+                print(f"\nRemoved binary features:")
+                for col in removed_features:
+                    variance = X[col].var()
+                    print(f"  - {col}: variance = {variance:.6f}")
+            
+            # Combine selected binary features with all non-binary features
+            selected_features = non_binary_cols + selected_binary_cols
+        else:
+            print("\nNo binary features found. Skipping variance threshold.")
+            selected_features = X.columns.tolist()
+        
+        print(f"\n{'='*60}")
+        print(f"Variance filtering completed:")
+        print(f"  - Final feature count: {len(selected_features)}")
+        print(f"{'='*60}\n")
+        
+        return selected_features, removed_features
+    
+    def fit(self, X, y=None):
+        """
+        Fit the feature selector
+        
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Input features
+        y : array-like, optional
+            Target variable (not used but kept for sklearn compatibility)
+        """
+        X = X.copy()
+        
+        print(f"\n{'#'*60}")
+        print(f"FEATURE SELECTION - Model Type: {self.model_base.upper()}")
+        print(f"Initial features: {X.shape[1]}")
+        print(f"{'#'*60}")
+        
+        if self.model_base.lower() == 'logistic':
+            # Step 1: VIF filtering for Logistic Regression
+            print(f"\nStep 1: VIF Filtering (threshold = {self.vif_threshold})")
+            selected_features, self.removed_vif_features_ = self._calculate_vif(X)
+            X_selected = X[selected_features]
+            
+            # Step 2: Variance threshold for binary features
+            print(f"\nStep 2: Variance Threshold for Binary Features")
+            self.selected_features_, self.removed_variance_features_ = self._apply_variance_threshold(X_selected)
+            
+        elif self.model_base.lower() == 'tree':
+            # Only variance threshold for tree-based models
+            print(f"\nApplying Variance Threshold for Binary Features")
+            self.selected_features_, self.removed_variance_features_ = self._apply_variance_threshold(X)
+            
+        else:
+            raise ValueError(f"Unknown model_base: {self.model_base}. "
+                           f"Choose from: 'logistic', 'random_forest', 'xgboost'")
+        
+        print(f"\n{'#'*60}")
+        print(f"FEATURE SELECTION SUMMARY")
+        print(f"{'#'*60}")
+        print(f"Initial features: {X.shape[1]}")
+        print(f"Features removed by VIF: {len(self.removed_vif_features_)}")
+        print(f"Features removed by variance: {len(self.removed_variance_features_)}")
+        print(f"Final features: {len(self.selected_features_)}")
+        print(f"Reduction: {X.shape[1] - len(self.selected_features_)} features "
+              f"({100*(X.shape[1] - len(self.selected_features_))/X.shape[1]:.1f}%)")
+        print(f"{'#'*60}\n")
+        
+        return self
+    
+    def transform(self, X):
+        """
+        Transform by selecting fitted features
+        
+        Parameters:
+        -----------
+        X : pd.DataFrame
+            Input features
+            
+        Returns:
+        --------
+        pd.DataFrame
+            Transformed dataframe with selected features only
+        """
+        if self.selected_features_ is None:
+            raise ValueError("FeatureSelector has not been fitted yet. Call fit() first.")
+        
+        X = X.copy()
+        
+        # Check if all selected features exist in X
+        missing_features = set(self.selected_features_) - set(X.columns)
+        if missing_features:
+            raise ValueError(f"Features missing in transform data: {missing_features}")
+        
+        return X[self.selected_features_]
+    
+    def get_feature_names_out(self, input_features=None):
+        """Get selected feature names (for sklearn compatibility)"""
+        if self.selected_features_ is None:
+            raise ValueError("FeatureSelector has not been fitted yet.")
+        return np.array(self.selected_features_)
 
 # Usage example:
-def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None, model_base = 'logistic'):
+def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None, 
+                                 model_base='logistic', apply_feature_selection=False,
+                                 vif_threshold=10, variance_threshold=0.01):
     """
     Create the full preprocessing pipeline
     
@@ -922,6 +1190,7 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None, m
         # Choose either KNN or Simple imputer for EXT_SOURCE
         #('ext_knn_imputer', ExtSourceKNNImputer(k=5, top_n=5)),
         ('ext_simple_imputer', SimpleImputerTransformer(columns=ext_cols, strategy='median')),
+        #('ext_meam_imputer', ExtMeanTransformer()),
         ('social_simple_imputer', SimpleImputerTransformer(columns=cols_social, strategy='median')),
         ('weekday', WeekdayEncoder()),
         ('hour_bin', HourBinner()),
@@ -944,10 +1213,19 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None, m
         steps.append(('flexible_encoder', FlexibleCategoricalEncoder(**encoding_config)))
     steps.append(('hour_bin_encoder', HourBinEncoder()))
     
+    # Add feature selection step
+    if apply_feature_selection:
+        steps.append(('feature_selector', FeatureSelector(
+            model_base=model_base,
+            vif_threshold=vif_threshold,
+            variance_threshold=variance_threshold
+        )))
+
     pipeline = Pipeline(steps)
     return pipeline
 
 def save_preprocessing_pipeline(pipeline, model_base = 'logistic'):
+    # feature selection dung model_base nen doi het ve model_base
     """
     Save preprocessing pipeline to disk
     

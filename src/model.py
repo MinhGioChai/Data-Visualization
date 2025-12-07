@@ -15,12 +15,25 @@ import warnings
 from pathlib import Path
 from typing import Dict, Tuple, Optional, Literal
 import logging
-import importlib
-import pipeline
-importlib.reload(pipeline)
-from pipeline import *
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+import importlib
+import sys
+
+# Nếu pipeline.py cùng thư mục
+try:
+    import pipeline
+    importlib.reload(pipeline)
+    from pipeline import *
+    print("✅ Imported classes from pipeline.py")
+except ImportError:
+    # Nếu pipeline.py ở thư mục src
+    sys.path.append('.')
+    import src.pipeline as pipeline
+    importlib.reload(pipeline)
+    from src.pipeline import *
+    print("✅ Imported classes from src/pipeline.py")
 
 warnings.filterwarnings('ignore')
 
@@ -773,9 +786,7 @@ def run_experiments(
                     ax6.legend()
                     ax6.set_ylim([0, 1.05])
                     ax6.set_title("Train vs Test Performance")
-                    for ax in fig.axes:
-                        for spine in ax.spines.values():
-                            spine.set_visible(False)
+
                     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 
                     plot_dir = Path("plots")
@@ -812,14 +823,10 @@ def run_experiments(
                     # 1. Feature Importance Plot
                     ax1 = plt.subplot(2, 3, 1)
                     top_features = feature_importance.head(15)
-                    sns.barplot(data=top_features, y='feature', x='importance', palette="coolwarm", ax=ax1)
+                    sns.barplot(data=top_features, y='feature', x='importance', palette='viridis', ax=ax1)
                     ax1.set_title('Top 15 Feature Importances', fontsize=14, fontweight='bold')
                     ax1.set_xlabel('Importance Score', fontsize=11)
-                    ax1.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
                     ax1.set_ylabel('Features', fontsize=11)
-                    # Remove y-axis numbers, keep only feature names
-                    ax1.set_yticks(range(len(top_features)))
-                    ax1.set_yticklabels(top_features['feature'])
 
                     # 2. Confusion Matrix
                     ax2 = plt.subplot(2, 3, 2)
@@ -877,9 +884,7 @@ def run_experiments(
                     ax6.set_xticklabels(metrics_df['Metric'], rotation=45, ha='right')
                     ax6.legend(fontsize=10)
                     ax6.set_ylim([0, 1.05])
-                    for ax in fig.axes:
-                        for spine in ax.spines.values():
-                            spine.set_visible(False)
+
                     # Add value labels on bars
                     for bars in [bars1, bars2]:
                         for bar in bars:

@@ -152,4 +152,3 @@ After proper data preparation:
 Supervisor: Dr. Nguyen Tuan Long
 =======
 
->>>>>>> 40d4c40552d401d62299bb30798501795149289a
