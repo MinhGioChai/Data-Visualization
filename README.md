@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # 📘 Credit Default Risk Prediction #
 ### The Power of Data Preparation – A Data Storytelling Approach
 
@@ -125,7 +124,34 @@ After proper data preparation:
 
     - Approve more suitable borrowers who lack traditional credit history
 
-## 🚀 How to Run (Sample Workflow)
+## Cấu trúc chính của repo
+```
+raw_data/      # dữ liệu gốc
+src/           # pipeline + training
+models/        # mô hình và pipeline đã lưu
+processing/    # hàm xử lý
+notebook/      # EDA và visualization
+plots/         # biểu đồ
+```
+## 🚀 How to Run 
+
+## 1. Cài đặt môi trường
+```bash
+git clone https://github.com/MinhGioChai/Data-Visualization
+cd Data-Visualization
+python -m venv venv
+venv\Scripts\activate   # Windows
+# hoặc
+source venv/bin/activate   # Mac/Linux
+
+pip install -r requirements.txt
+
+## 2. Chạy toàn bộ quy trình (preprocessing + training + evaluation)
+```bash
+python src/model.py
+```
+
+
 
 ## 🧠 Key Takeaways
 
