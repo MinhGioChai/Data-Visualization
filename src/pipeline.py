@@ -65,28 +65,10 @@ class BasicImputerTransformer(BaseEstimator, TransformerMixin):
         X['DAYS_LAST_PHONE_CHANGE'] = X['DAYS_LAST_PHONE_CHANGE'].fillna(self.phone_change_median_)
         
         # ORGANISATION_TYPE
-                # Imputation for ORGANIZATION_TYPE (conditional XNA handling)
-        if 'ORGANIZATION_TYPE' in X.columns:
-            initial_xna = int((X['ORGANIZATION_TYPE'] == 'XNA').sum())
-            replaced_cleaning = 0
-
-            if 'OCCUPATION_TYPE' in X.columns and initial_xna > 0:
-                mask_cleaning = (
-                    (X['ORGANIZATION_TYPE'] == 'XNA') &
-                    (X['OCCUPATION_TYPE'] == 'Cleaning staff')
-                )
-                replaced_cleaning = int(mask_cleaning.sum())
-                if replaced_cleaning:
-                    X.loc[mask_cleaning, 'ORGANIZATION_TYPE'] = 'Cleaning'
-            
-            # Replace remaining XNA with 'No Organization'
-            mask_remaining = (X['ORGANIZATION_TYPE'] == 'XNA')
-            replaced_no_org = int(mask_remaining.sum())
-            if replaced_no_org:
-                X.loc[mask_remaining, 'ORGANIZATION_TYPE'] = 'No Organization'
+        if self.org_type_mode_ is not None:
+            X['ORGANIZATION_TYPE'] = X['ORGANIZATION_TYPE'].fillna(self.org_type_mode_)
         
         return X
- 
 class WeekdayEncoder(BaseEstimator, TransformerMixin):
     """
     Convert weekday to cyclical encoding (sin/cos).
@@ -938,8 +920,8 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None, m
         ('employment_imputer', EmploymentImputer()),
         ('occupation_imputer', OccupationImputer()),
         # Choose either KNN or Simple imputer for EXT_SOURCE
-        ('ext_knn_imputer', ExtSourceKNNImputer(k=5, top_n=5)),
-        #('ext_simple_imputer', SimpleImputerTransformer(columns=ext_cols, strategy='median')),
+        #('ext_knn_imputer', ExtSourceKNNImputer(k=5, top_n=5)),
+        ('ext_simple_imputer', SimpleImputerTransformer(columns=ext_cols, strategy='median')),
         ('social_simple_imputer', SimpleImputerTransformer(columns=cols_social, strategy='median')),
         ('weekday', WeekdayEncoder()),
         ('hour_bin', HourBinner()),
@@ -948,7 +930,7 @@ def create_preprocessing_pipeline(encoding_type='smart', encoding_config=None, m
         ('credit_bureau_processor', CreditBureauProcessor()),
         ('document_processor', DocumentProcessor()),
         ('social_outlier_processor', SocialCircleProcessor()),
-        ('amount_outlier_processor', AmountOutlierProcessor()),
+        #('amount_outlier_processor', AmountOutlierProcessor()),
         ('log_transformer', log_transformer),
     ]
     
